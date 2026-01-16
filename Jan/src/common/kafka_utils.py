@@ -1,0 +1,225 @@
+"""Kafka utilities for producer and consumer operations.
+
+This module provides helper functions for Kafka operations with production-grade
+settings optimized for trading workloads where durability is paramount.
+"""
+
+import json
+from typing import Any
+
+from confluent_kafka import Consumer, KafkaError, KafkaException, Producer
+from confluent_kafka.admin import AdminClient, NewTopic
+
+from src.common.config import KafkaSettings, get_settings
+from src.common.logging_config import get_logger
+
+logger = get_logger(__name__)
+
+
+def create_producer(settings: KafkaSettings | None = None) -> Producer:
+    """Create a Kafka producer with trading-grade durability settings.
+
+    The producer is configured with:
+    - acks=all: Wait for all replicas to acknowledge
+    - enable.idempotence=true: Exactly-once producer semantics
+    - retries: Maximum retries for transient failures
+    - linger.ms: Small batch window for efficiency
+
+    Args:
+        settings: Kafka settings. If None, will use default settings.
+
+    Returns:
+        A configured Kafka producer instance.
+    """
+    if settings is None:
+        settings = get_settings().kafka
+
+    config = {
+        "bootstrap.servers": settings.bootstrap_servers,
+        # Durability settings (critical for trading)
+        "acks": "all",  # Wait for all replicas
+        "enable.idempotence": True,  # Exactly-once producer semantics
+        "max.in.flight.requests.per.connection": 5,  # Required for idempotence
+        # Retry settings
+        "retries": 2147483647,  # Max retries (will honor delivery.timeout.ms)
+        "delivery.timeout.ms": 120000,  # 2 minutes total timeout
+        "retry.backoff.ms": 100,  # Backoff between retries
+        # Batching settings (balance between latency and throughput)
+        "linger.ms": 5,  # Wait up to 5ms to batch messages
+        "batch.size": 16384,  # 16KB batch size
+        # Compression
+        "compression.type": "lz4",  # Good balance of speed and compression
+        # Client identification
+        "client.id": "trade-producer",
+    }
+
+    logger.info(
+        "Creating Kafka producer",
+        bootstrap_servers=settings.bootstrap_servers,
+        acks="all",
+        idempotence=True,
+    )
+
+    return Producer(config)
+
+
+def create_consumer(
+    settings: KafkaSettings | None = None,
+    *,
+    auto_commit: bool = False,
+) -> Consumer:
+    """Create a Kafka consumer with appropriate settings.
+
+    The consumer is configured with manual offset commits for at-least-once
+    semantics with idempotent downstream writes.
+
+    Args:
+        settings: Kafka settings. If None, will use default settings.
+        auto_commit: Whether to enable auto-commit. Default False for
+            manual commit after successful processing.
+
+    Returns:
+        A configured Kafka consumer instance.
+    """
+    if settings is None:
+        settings = get_settings().kafka
+
+    config = {
+        "bootstrap.servers": settings.bootstrap_servers,
+        "group.id": settings.consumer_group,
+        # Offset management
+        "auto.offset.reset": "earliest",  # Start from beginning if no offset
+        "enable.auto.commit": auto_commit,
+        # Processing settings
+        "max.poll.interval.ms": 300000,  # 5 minutes max processing time
+        "session.timeout.ms": 45000,  # 45 seconds session timeout
+        "heartbeat.interval.ms": 15000,  # 15 seconds heartbeat
+        # Fetch settings
+        "fetch.min.bytes": 1,  # Don't wait for batches (low latency)
+        "fetch.max.wait.ms": 500,  # Max wait for fetch response
+        # Client identification
+        "client.id": f"trade-consumer-{settings.consumer_group}",
+    }
+
+    logger.info(
+        "Creating Kafka consumer",
+        bootstrap_servers=settings.bootstrap_servers,
+        consumer_group=settings.consumer_group,
+        auto_commit=auto_commit,
+    )
+
+    return Consumer(config)
+
+
+def create_admin_client(settings: KafkaSettings | None = None) -> AdminClient:
+    """Create a Kafka admin client for topic management.
+
+    Args:
+        settings: Kafka settings. If None, will use default settings.
+
+    Returns:
+        A configured Kafka admin client instance.
+    """
+    if settings is None:
+        settings = get_settings().kafka
+
+    return AdminClient({"bootstrap.servers": settings.bootstrap_servers})
+
+
+def ensure_topics_exist(
+    settings: KafkaSettings | None = None,
+    num_partitions: int = 6,
+    replication_factor: int = 1,
+) -> None:
+    """Ensure required Kafka topics exist.
+
+    Creates the main trades topic and DLQ topic if they don't exist.
+
+    Args:
+        settings: Kafka settings.
+        num_partitions: Number of partitions for new topics.
+        replication_factor: Replication factor for new topics.
+    """
+    if settings is None:
+        settings = get_settings().kafka
+
+    admin = create_admin_client(settings)
+
+    topics = [
+        NewTopic(
+            topic=settings.topic,
+            num_partitions=num_partitions,
+            replication_factor=replication_factor,
+        ),
+        NewTopic(
+            topic=settings.dlq_topic,
+            num_partitions=max(1, num_partitions // 2),  # Fewer partitions for DLQ
+            replication_factor=replication_factor,
+        ),
+    ]
+
+    futures = admin.create_topics(topics)
+
+    for topic, future in futures.items():
+        try:
+            future.result()
+            logger.info("Created topic", topic=topic)
+        except KafkaException as e:
+            if e.args[0].code() == KafkaError.TOPIC_ALREADY_EXISTS:
+                logger.debug("Topic already exists", topic=topic)
+            else:
+                logger.error("Failed to create topic", topic=topic, error=str(e))
+                raise
+
+
+def delivery_callback(err: KafkaError | None, msg: Any) -> None:
+    """Callback for producer delivery reports.
+
+    This callback is invoked for every message produced, indicating
+    whether delivery was successful or failed.
+
+    Args:
+        err: Error if delivery failed, None if successful.
+        msg: The message that was delivered (or failed).
+    """
+    if err is not None:
+        logger.error(
+            "Message delivery failed",
+            error=str(err),
+            topic=msg.topic(),
+            partition=msg.partition(),
+        )
+    else:
+        logger.debug(
+            "Message delivered",
+            topic=msg.topic(),
+            partition=msg.partition(),
+            offset=msg.offset(),
+        )
+
+
+def serialize_message(data: dict[str, Any]) -> bytes:
+    """Serialize a message to JSON bytes.
+
+    Args:
+        data: Dictionary to serialize.
+
+    Returns:
+        UTF-8 encoded JSON bytes.
+    """
+    return json.dumps(data, default=str).encode("utf-8")
+
+
+def deserialize_message(data: bytes) -> dict[str, Any]:
+    """Deserialize JSON bytes to a dictionary.
+
+    Args:
+        data: UTF-8 encoded JSON bytes.
+
+    Returns:
+        Deserialized dictionary.
+
+    Raises:
+        json.JSONDecodeError: If the data is not valid JSON.
+    """
+    return json.loads(data.decode("utf-8"))

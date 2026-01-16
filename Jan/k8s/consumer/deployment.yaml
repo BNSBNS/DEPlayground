@@ -1,0 +1,152 @@
+# Kubernetes Deployment for Trade Streaming Consumer
+# Question 10: Production-ready deployment with Kafka consumer groups
+#
+# Key considerations:
+# - Multiple replicas form a Kafka consumer group for parallelism
+# - Replicas should not exceed Kafka partition count (6 partitions)
+# - HPA can scale based on consumer lag
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: trade-consumer
+  namespace: trading
+  labels:
+    app.kubernetes.io/name: energy-trading-platform
+    app.kubernetes.io/component: consumer
+spec:
+  # Start with 2 replicas (consumer group parallelism)
+  # Max should not exceed partition count (6)
+  replicas: 2
+  selector:
+    matchLabels:
+      app: trade-consumer
+  template:
+    metadata:
+      labels:
+        app: trade-consumer
+        app.kubernetes.io/name: energy-trading-platform
+        app.kubernetes.io/component: consumer
+    spec:
+      # Security context
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+
+      containers:
+        - name: consumer
+          image: energy-trading-platform/consumer:latest
+          imagePullPolicy: IfNotPresent
+
+          # Resource management (Guaranteed QoS class)
+          # Consumer needs more memory for window state
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "200m"
+            limits:
+              memory: "512Mi"
+              cpu: "1000m"
+
+          # Environment from ConfigMap and Secrets
+          envFrom:
+            - configMapRef:
+                name: trading-config
+            - secretRef:
+                name: trading-secrets
+
+          # Construct PostgreSQL DSN from components
+          env:
+            - name: POSTGRES_DSN
+              value: "postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@$(POSTGRES_HOST):$(POSTGRES_PORT)/$(POSTGRES_DB)"
+
+          # Container security
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+
+          # Liveness probe: Is the process alive?
+          livenessProbe:
+            exec:
+              command:
+                - pgrep
+                - -f
+                - "python -m src.consumer.main"
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+
+          # Readiness probe: Is the consumer connected and processing?
+          readinessProbe:
+            exec:
+              command:
+                - pgrep
+                - -f
+                - "python -m src.consumer.main"
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+
+      # Graceful termination (allow time to commit offsets)
+      terminationGracePeriodSeconds: 60
+
+      # Restart policy
+      restartPolicy: Always
+
+---
+# PodDisruptionBudget for availability during updates
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: trade-consumer-pdb
+  namespace: trading
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: trade-consumer
+
+---
+# HorizontalPodAutoscaler for consumer scaling
+# Scales based on Kafka consumer lag (requires Prometheus Adapter)
+# Question 10: How to autoscale consumers based on lag
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: trade-consumer-hpa
+  namespace: trading
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: trade-consumer
+  minReplicas: 2
+  maxReplicas: 6  # Should not exceed partition count
+  metrics:
+    # Scale based on CPU (default, always works)
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+
+    # Scale based on Kafka consumer lag (requires external metrics)
+    # Uncomment when Prometheus Adapter is configured
+    # - type: External
+    #   external:
+    #     metric:
+    #       name: kafka_consumergroup_lag
+    #       selector:
+    #         matchLabels:
+    #           consumergroup: trade-aggregator
+    #           topic: trades
+    #     target:
+    #       type: AverageValue
+    #       averageValue: "1000"  # Scale up when lag > 1000 per pod

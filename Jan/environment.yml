@@ -1,0 +1,53 @@
+# Conda environment for Energy Trading Platform
+# Usage:
+#   conda env create -f environment.yml
+#   conda activate energy-trading
+#   pip install -e ".[dev]"  # Install project in editable mode with dev dependencies
+
+name: energy-trading
+
+channels:
+  - conda-forge
+  - defaults
+
+dependencies:
+  # Python version
+  - python=3.12
+
+  # Core dependencies (conda-forge versions where available)
+  - pandas>=2.1.0
+  - numpy>=1.26.0
+
+  # Database
+  - psycopg>=3.1.0
+  - libpq  # PostgreSQL client library
+
+  # Development tools
+  - pytest>=7.4.0
+  - pytest-cov>=4.1.0
+  - mypy>=1.7.0
+
+  # Pip for packages not available in conda
+  - pip
+
+  # pip-installed packages (not available or better via pip)
+  - pip:
+      # Kafka client (not in conda-forge)
+      - confluent-kafka>=2.3.0
+
+      # Pydantic ecosystem
+      - pydantic>=2.5.0
+      - pydantic-settings>=2.1.0
+
+      # Logging
+      - structlog>=23.2.0
+
+      # Date utilities
+      - python-dateutil>=2.8.0
+
+      # Development dependencies
+      - ruff>=0.1.6
+      - pytest-asyncio>=0.21.0
+      - testcontainers[kafka,postgres]>=3.7.0
+      - types-python-dateutil>=2.8.0
+      - pandas-stubs>=2.1.0

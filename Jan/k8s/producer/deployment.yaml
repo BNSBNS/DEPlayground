@@ -1,0 +1,86 @@
+# Kubernetes Deployment for Trade Event Producer
+# Question 10: Production-ready deployment with proper resource management
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: trade-producer
+  namespace: trading
+  labels:
+    app.kubernetes.io/name: energy-trading-platform
+    app.kubernetes.io/component: producer
+spec:
+  replicas: 1  # Single producer is sufficient for most use cases
+  selector:
+    matchLabels:
+      app: trade-producer
+  template:
+    metadata:
+      labels:
+        app: trade-producer
+        app.kubernetes.io/name: energy-trading-platform
+        app.kubernetes.io/component: producer
+    spec:
+      # Security context
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+
+      containers:
+        - name: producer
+          image: energy-trading-platform/producer:latest
+          imagePullPolicy: IfNotPresent
+
+          # Resource management (Guaranteed QoS class)
+          # Setting requests = limits ensures predictable scheduling
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "500m"
+
+          # Environment from ConfigMap
+          envFrom:
+            - configMapRef:
+                name: trading-config
+
+          # Container security
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+
+          # Liveness probe: Is the process running?
+          livenessProbe:
+            exec:
+              command:
+                - pgrep
+                - -f
+                - "python -m src.producer.main"
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+
+          # Readiness probe: Is the producer ready to produce?
+          readinessProbe:
+            exec:
+              command:
+                - pgrep
+                - -f
+                - "python -m src.producer.main"
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+
+      # Graceful termination
+      terminationGracePeriodSeconds: 30
+
+      # Restart policy
+      restartPolicy: Always

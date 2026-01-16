@@ -1,0 +1,8 @@
+# Kubernetes Namespace for Energy Trading Platform
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: trading
+  labels:
+    app.kubernetes.io/name: energy-trading-platform
+    app.kubernetes.io/component: namespace

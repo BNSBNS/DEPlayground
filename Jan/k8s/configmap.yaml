@@ -1,0 +1,42 @@
+# Kubernetes ConfigMap for Energy Trading Platform
+# Question 10: Configuration via ConfigMap (not baked into images)
+#
+# Note: Sensitive values like passwords should use Secrets instead
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: trading-config
+  namespace: trading
+  labels:
+    app.kubernetes.io/name: energy-trading-platform
+    app.kubernetes.io/component: config
+data:
+  # Kafka configuration
+  KAFKA_BOOTSTRAP_SERVERS: "kafka.trading.svc.cluster.local:9092"
+  KAFKA_TOPIC: "trades"
+  KAFKA_DLQ_TOPIC: "trades-dlq"
+  KAFKA_CONSUMER_GROUP: "trade-aggregator"
+
+  # Producer configuration
+  PRODUCER_RATE: "10"
+  PRODUCER_BURST_ENABLED: "true"
+  PRODUCER_BURST_MULTIPLIER: "5"
+  PRODUCER_BURST_DURATION: "30"
+  PRODUCER_BURST_INTERVAL: "300"
+
+  # Consumer configuration
+  WINDOW_DURATION_SECONDS: "60"
+  LATE_EVENT_GRACE_SECONDS: "30"
+  DB_BATCH_SIZE: "100"
+
+  # PostgreSQL configuration (non-sensitive)
+  POSTGRES_HOST: "postgres.trading.svc.cluster.local"
+  POSTGRES_PORT: "5432"
+  POSTGRES_DB: "trades"
+
+  # Logging
+  LOG_LEVEL: "INFO"
+  LOG_JSON_FORMAT: "true"
+
+  # Environment
+  ENVIRONMENT: "production"
