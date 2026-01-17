@@ -179,12 +179,35 @@ See [.env.example](.env.example) for complete configuration options.
 
 ## Documentation
 
+### Core Concepts
+
 | Document | Description |
 |----------|-------------|
 | [ARCHITECTURE.md](docs/architecture/ARCHITECTURE.md) | End-to-end system design (Q1) |
-| [STREAMING_SEMANTICS.md](docs/STREAMING_SEMANTICS.md) | Delivery guarantees (Q2) |
+| [STREAMING_SEMANTICS.md](docs/STREAMING_SEMANTICS.md) | Delivery guarantees, CAP/ACID, upsert patterns (Q2, Q5-6, Q8-10) |
 | [FAILURE_SCENARIOS.md](docs/FAILURE_SCENARIOS.md) | Failure modes and recovery (Q11) |
 | [MONITORING_STRATEGY.md](docs/MONITORING_STRATEGY.md) | Metrics and alerts (Q14) |
+
+### Operations
+
+| Document | Description |
+|----------|-------------|
+| [K8S_AUTOSCALING_HA.md](docs/K8S_AUTOSCALING_HA.md) | Autoscaling, HA, recovery validation (Q1) |
+| [CDC_SCD_CACHING.md](docs/CDC_SCD_CACHING.md) | CDC, SCD, caching strategies (Q4, Q7) |
+
+### SQL Queries
+
+| Query | Description |
+|-------|-------------|
+| [vwap_last_60_minutes.sql](sql/queries/vwap_last_60_minutes.sql) | VWAP per symbol (Q7) |
+| [data_freshness_check.sql](sql/queries/data_freshness_check.sql) | Data freshness validation (Q3) |
+
+### Monitoring Stack
+
+| File | Description |
+|------|-------------|
+| [k8s/monitoring/](k8s/monitoring/) | Prometheus + Grafana stack (Q1a, Q2) |
+| [src/common/metrics.py](src/common/metrics.py) | Prometheus metrics implementation (Q2) |
 
 ## Kubernetes Deployment
 

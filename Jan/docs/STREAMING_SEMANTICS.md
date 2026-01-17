@@ -2,231 +2,286 @@
 
 ## Question 2: Delivery Guarantees and Idempotency
 
-This document explains the streaming semantics used in the Energy Trading Platform, including delivery guarantees, offset management, and idempotency patterns.
+---
+
+## Table of Contents
+
+1. [Semantics vs Schematics](#1-semantics-vs-schematics)
+2. [Delivery Guarantee Strategies](#2-delivery-guarantee-strategies)
+3. [Our Implementation](#3-our-implementation-at-least-once--idempotency)
+4. [Database Write Patterns](#4-database-write-patterns)
+5. [CAP Theorem and ACID Properties](#5-cap-theorem-and-acid-properties)
+6. [Streaming Semantics Implementation Details](#6-streaming-semantics-implementation-details)
+7. [Kafka Offset Management](#7-kafka-offset-management)
 
 ---
 
-## Delivery Guarantee Semantics
+## 1. Semantics vs Schematics
+
+| Term | Definition | Example |
+|------|------------|---------|
+| **Semantics** | The *meaning/behavior* of operations | "At-least-once" = messages delivered 1+ times |
+| **Schematics** | The *structure/diagram* of a system | Architecture diagrams, data flow charts |
+
+We use **"semantics"** because we describe *behavioral guarantees*, not structural diagrams.
+
+---
+
+## 2. Delivery Guarantee Strategies
+
+### Comparison Table
+
+| Strategy | Data Loss | Duplicates | Latency | Complexity | Use Case |
+|----------|-----------|------------|---------|------------|----------|
+| **At-Most-Once** | Possible | None | Lowest | Simple | Logs, metrics |
+| **At-Least-Once** | None | Possible | Medium | Medium | Analytics (with idempotency) |
+| **Exactly-Once** | None | None | Highest | High | Financial transactions |
+
+---
 
 ### At-Most-Once
 
-**Definition:** Messages are delivered zero or one time. Some messages may be lost.
+**Flow:** Commit → Process (if crash, message lost)
 
-**How it works:**
-1. Consumer receives message
-2. Consumer commits offset immediately
-3. Consumer processes message
-4. If processing fails, message is lost (offset already committed)
+```python
+# AT-MOST-ONCE: Risky - data loss possible
+for message in consumer:
+    consumer.commit()          # Commit BEFORE processing
+    process(message)           # If this fails, message LOST
+```
 
-**Use cases:** Metrics, logs where some loss is acceptable
-
-**Not suitable for:** Trading systems (cannot lose trade data)
-
-### At-Least-Once
-
-**Definition:** Messages are delivered one or more times. No messages are lost, but duplicates may occur.
-
-**How it works:**
-1. Consumer receives message
-2. Consumer processes message
-3. Consumer writes to database
-4. Consumer commits offset
-5. If step 4 fails after step 3, message will be reprocessed (duplicate)
-
-**Use cases:** When combined with idempotent processing
-
-**This is what we implement.**
-
-### Exactly-Once
-
-**Definition:** Messages are delivered exactly one time. No loss, no duplicates.
-
-**How it works (true exactly-once):**
-- Requires atomic transactions spanning Kafka and downstream system
-- Kafka Transactions + Transactional Outbox pattern
-
-**Trade-offs:**
-- Higher latency (two-phase commit)
-- More complex implementation
-- Not all downstream systems support it
+**Pros:** Simple, lowest latency, no dedup needed
+**Cons:** Data loss on failure
+**Use Cases:** Click tracking, application logs, real-time metrics
 
 ---
 
-## Our Implementation: At-Least-Once + Idempotency
+### At-Least-Once (This Project)
 
-We achieve an **exactly-once effect** by combining at-least-once delivery with idempotent writes.
-
-### The Pattern
+**Flow:** Process → Write → Commit (if crash before commit, replay)
 
 ```python
+# AT-LEAST-ONCE: Safe - duplicates handled by upsert
+for message in consumer:
+    result = process(message)
+    db.upsert(result)          # Idempotent write
+    consumer.commit()          # Commit AFTER success
+```
+
+**Pros:** No data loss, works with any downstream
+**Cons:** Requires idempotent handling
+**Use Cases:** Event pipelines, analytics, this project
+
+---
+
+### Exactly-Once
+
+**Flow:** Transactional (process + commit atomic)
+
+```python
+# EXACTLY-ONCE: Transactional processing
+producer.begin_transaction()
+try:
+    result = process(message)
+    producer.send(output_topic, result)
+    producer.send_offsets_to_transaction({partition: offset+1}, group_id)
+    producer.commit_transaction()
+except:
+    producer.abort_transaction()
+```
+
+**Pros:** No loss, no duplicates
+**Cons:** Higher latency, requires transactional support
+**Use Cases:** Banking, inventory, financial ledgers
+
+---
+
+### Decision Flow
+
+```
+Is data loss acceptable?
+    │
+    ├─ YES → At-Most-Once
+    │
+    └─ NO → Can downstream handle duplicates?
+              │
+              ├─ YES → At-Least-Once + Idempotency  ← THIS PROJECT
+              │
+              └─ NO → Exactly-Once (transactions)
+```
+
+---
+
+## 3. Our Implementation: At-Least-Once + Idempotency
+
+### Pattern
+
+```python
+# src/consumer/kafka_consumer.py (simplified)
 for message in consumer:
     try:
-        # 1. Parse and validate
-        trade = parse_trade_event(message)
-
-        # 2. Process (window aggregation)
-        aggregates = aggregator.add_trade(trade)
-
-        # 3. Write to database (IDEMPOTENT)
-        for agg in aggregates:
-            db_writer.upsert(agg)  # ON CONFLICT DO UPDATE
-
-        # 4. Commit offset (ONLY after successful write)
-        consumer.commit()
-
+        trade = parse_trade_event(message)        # 1. Parse
+        aggregates = aggregator.add_trade(trade)  # 2. Aggregate
+        db_writer.upsert(aggregates)              # 3. Idempotent write
+        consumer.commit()                          # 4. Commit after success
     except ValidationError as e:
-        # 5. Send to DLQ and commit (move past bad message)
-        dlq_handler.send(message, error=e)
-        consumer.commit()
+        dlq_handler.send(message, e)              # 5. Bad msg → DLQ
+        consumer.commit()                          # 6. Move past bad msg
 ```
 
 ### Key Principles
 
-1. **Commit offset only after successful database write**
-2. **Database upsert handles duplicates gracefully**
-3. **DLQ prevents bad messages from blocking pipeline**
+1. Commit offset **only after** successful DB write
+2. Upsert handles duplicates gracefully
+3. DLQ prevents pipeline blockage
 
 ---
 
-## Kafka Offset Management
+## 4. Database Write Patterns
 
-### What is an Offset?
+### Comparison Table
 
-An offset is a unique identifier for each message within a Kafka partition. It represents the position of a message in the partition log.
+| Pattern | Duplicates | Speed | Use Case |
+|---------|------------|-------|----------|
+| **INSERT only** | Fails | Fast | Unique events (UUID PK) |
+| **UPSERT** (this project) | Overwrites | Medium | Aggregates, latest state |
+| **INSERT IGNORE** | Skips silently | Fast | Append-only logs |
+| **Conditional INSERT** | App checks first | Slow | Custom logic |
 
-```
-Partition 0:  [msg0] [msg1] [msg2] [msg3] [msg4] ...
-              offset  offset offset offset offset
-                0      1      2      3      4
-```
-
-### Consumer Offset States
-
-| State | Description |
-|-------|-------------|
-| **Current Position** | Next message to be consumed |
-| **Committed Offset** | Last offset successfully processed (stored in Kafka) |
-
-### Offset Commit Strategies
-
-| Strategy | Description | Risk |
-|----------|-------------|------|
-| Auto-commit (periodic) | Kafka commits offsets periodically | Data loss if crash before processing |
-| Auto-commit (on poll) | Commit before each poll | Data loss if crash during processing |
-| **Manual commit** | Application commits after processing | Duplicates if crash after processing, before commit |
-
-**We use manual commit** for maximum control and safety.
-
----
-
-## Database Upsert Pattern
-
-### The Problem
-
-With at-least-once delivery, the same trade may be processed multiple times:
-
-```
-Trade T1 → Process → Write to DB → [CRASH] → Restart → Replay T1 → Process again
-```
-
-Without protection, this creates duplicate records.
-
-### The Solution: Idempotent Upsert
+### Upsert SQL (Our Choice)
 
 ```sql
-INSERT INTO trade_aggregates (
-    symbol, window_start, vwap, total_volume, trade_count, max_price, min_price
-)
+INSERT INTO trade_aggregates (symbol, window_start, vwap, total_volume, ...)
 VALUES (%(symbol)s, %(window_start)s, %(vwap)s, ...)
 ON CONFLICT (symbol, window_start) DO UPDATE SET
     vwap = EXCLUDED.vwap,
     total_volume = EXCLUDED.total_volume,
-    trade_count = EXCLUDED.trade_count,
-    max_price = EXCLUDED.max_price,
-    min_price = EXCLUDED.min_price,
     updated_at = NOW();
 ```
 
-### How It Works
-
-| Scenario | Behavior |
-|----------|----------|
-| New window | INSERT new row |
-| Replay (same data) | UPDATE with identical values (no effect) |
-| Late event | UPDATE with correct aggregated values |
-
-**Key insight:** The composite primary key `(symbol, window_start)` makes writes naturally idempotent.
+**Why it works:** Composite PK `(symbol, window_start)` = natural business key. Same inputs → same result.
 
 ---
 
-## Interaction: Offsets, Commits, and Upserts
+## 5. CAP Theorem and ACID Properties
 
-### Normal Processing Flow
+### CAP Theorem
+
+| Property | Definition | Our System |
+|----------|------------|------------|
+| **C**onsistency | All nodes see same data | PostgreSQL: strong |
+| **A**vailability | Always responds | Kafka: highly available |
+| **P**artition Tolerance | Works during network splits | Required |
+
+**Trade-off:** You can only guarantee 2 of 3 in distributed systems.
+
+- **PostgreSQL:** CP (consistent, may reject writes if unavailable)
+- **Kafka:** AP (available, eventually consistent across replicas)
+
+### ACID Properties
+
+| Property | Definition | Implementation |
+|----------|------------|----------------|
+| **A**tomicity | All or nothing | Batch writes in single transaction |
+| **C**onsistency | Valid state transitions | Constraints, triggers |
+| **I**solation | No interference | PostgreSQL default isolation |
+| **D**urability | Survives crashes | WAL, Kafka `acks=all` |
+
+### BASE (Kafka/NoSQL) vs ACID (PostgreSQL)
+
+| ACID | BASE |
+|------|------|
+| Atomicity | **B**asically **A**vailable |
+| Consistency | **S**oft state |
+| Isolation | **E**ventual consistency |
+| Durability | |
+
+**Our hybrid:** Kafka (BASE) → PostgreSQL (ACID)
+
+---
+
+## 6. Streaming Semantics Implementation Details
+
+### Implementation Comparison
+
+| Aspect | At-Most-Once | At-Least-Once | Exactly-Once |
+|--------|--------------|---------------|--------------|
+| Offset commit | Before processing | After processing | Transactional |
+| Failure handling | Skip | Retry/DLQ | Abort transaction |
+| Downstream need | None | Idempotent writes | Transactional support |
+
+### Code Implementations
+
+#### At-Most-Once (Reference)
+```python
+class AtMostOnceConsumer:
+    def run(self):
+        for msg in self.consumer:
+            self.consumer.commit()      # Commit first
+            self._process(msg)          # Loss if fails here
+```
+
+#### At-Least-Once (This Project)
+```python
+class AtLeastOnceConsumer:
+    def run(self):
+        for msg in self.consumer:
+            try:
+                result = self._process(msg)
+                self.db.upsert(result)  # Idempotent
+                self.consumer.commit()  # After success
+            except ValidationError as e:
+                self.dlq.send(msg, e)
+                self.consumer.commit()  # Move forward
+            except DatabaseError:
+                raise  # Don't commit, retry on restart
+```
+
+#### Exactly-Once (Reference)
+```python
+class ExactlyOnceConsumer:
+    def run(self):
+        self.producer.init_transactions()
+        for msg in self.consumer:
+            self.producer.begin_transaction()
+            try:
+                result = self._process(msg)
+                self.producer.send("output", result)
+                self.producer.send_offsets_to_transaction(
+                    {msg.partition: msg.offset + 1}, self.group_id
+                )
+                self.producer.commit_transaction()
+            except:
+                self.producer.abort_transaction()
+```
+
+---
+
+## 7. Kafka Offset Management
+
+### What is an Offset?
 
 ```
-1. Poll message (offset=42) from Kafka
-2. Parse trade event
-3. Add to window aggregator
-4. If window complete:
-   a. Compute VWAP, volume, etc.
-   b. UPSERT to PostgreSQL
-   c. Verify write success
-5. Commit offset 42 to Kafka
-6. Poll next message (offset=43)
+Partition 0:  [msg0] [msg1] [msg2] [msg3] [msg4]
+               ↑                    ↑
+          offset=0             offset=3 (committed)
 ```
 
-### Failure Scenarios
+### Commit Strategies
+
+| Strategy | When | Risk | Use |
+|----------|------|------|-----|
+| Auto-commit | Periodic | Data loss | Dev only |
+| Manual (this project) | After success | Duplicates (handled) | Production |
+
+### Failure Recovery
 
 | Scenario | What Happens | Recovery |
 |----------|--------------|----------|
-| Crash before DB write | Offset not committed | Replay from offset 42, process normally |
-| Crash after DB write, before commit | Offset not committed | Replay from offset 42, upsert handles duplicate |
-| Crash after commit | Normal operation | Resume from offset 43 |
-| DB unavailable | Write fails, retry with backoff | Keep retrying until DB recovers |
-
----
-
-## End-to-End Exactly-Once (Stretch Goal)
-
-True exactly-once semantics require coordinating transactions across Kafka and the database.
-
-### Transactional Outbox Pattern
-
-```
-┌─────────────────────────────────────────────────────────┐
-│                    DATABASE TRANSACTION                 │
-│                                                         │
-│  1. Write trade aggregate to trade_aggregates table    │
-│  2. Write offset to outbox table                       │
-│  3. COMMIT (atomic)                                     │
-│                                                         │
-└─────────────────────────────────────────────────────────┘
-                           │
-                           ▼
-┌─────────────────────────────────────────────────────────┐
-│                   BACKGROUND PROCESS                    │
-│                                                         │
-│  1. Read uncommitted offsets from outbox               │
-│  2. Commit offsets to Kafka                            │
-│  3. Mark as committed in outbox                        │
-│                                                         │
-└─────────────────────────────────────────────────────────┘
-```
-
-### Trade-offs
-
-| Aspect | At-Least-Once + Idempotency | True Exactly-Once |
-|--------|------------------------------|-------------------|
-| **Complexity** | Simple | Complex |
-| **Latency** | Lower | Higher (2PC) |
-| **Dependencies** | Kafka + DB | Kafka + DB + Outbox |
-| **Failure modes** | Well understood | More edge cases |
-| **Correctness** | Equivalent for idempotent writes | Guaranteed |
-
-**Our choice:** At-least-once + idempotency is sufficient for this use case because:
-1. Aggregates are naturally idempotent (same inputs → same outputs)
-2. Upsert pattern handles duplicates
-3. Simpler to implement, operate, and debug
+| Crash before DB write | Offset not committed | Replay, process normally |
+| Crash after write, before commit | Offset not committed | Replay, upsert handles dup |
+| Crash after commit | Normal | Resume next offset |
+| DB unavailable | Write fails | Retry until recovery |
 
 ---
 
@@ -234,7 +289,7 @@ True exactly-once semantics require coordinating transactions across Kafka and t
 
 | Component | Semantics | Implementation |
 |-----------|-----------|----------------|
-| **Producer → Kafka** | Exactly-once | `acks=all`, `enable.idempotence=true` |
-| **Kafka → Consumer** | At-least-once | Manual offset commit after processing |
-| **Consumer → Database** | Idempotent | `INSERT ... ON CONFLICT DO UPDATE` |
-| **End-to-End Effect** | Exactly-once | Combination of above |
+| Producer → Kafka | Exactly-once | `acks=all`, `enable.idempotence=true` |
+| Kafka → Consumer | At-least-once | Manual commit after processing |
+| Consumer → DB | Idempotent | `INSERT ... ON CONFLICT DO UPDATE` |
+| **End-to-End** | **Exactly-once effect** | Combination of above |
