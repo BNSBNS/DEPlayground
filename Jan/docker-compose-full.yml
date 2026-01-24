@@ -194,15 +194,24 @@ services:
   # CHAT WITH DATA (Natural Language Queries)
   # ============================================
 
-  ollama:
-    image: ollama/ollama:latest
-    container_name: ollama
-    ports:
-      - "11434:11434"
-    volumes:
-      - ollama_data:/root/.ollama
-    # Pull llama3.2 model on first run:
-    # docker exec ollama ollama pull llama3.2
+  # Option A: Use local Ollama (default) - assumes Ollama running on host
+  # Option B: Uncomment ollama service below for Docker with GPU
+  #
+  # ollama:
+  #   image: ollama/ollama:latest
+  #   container_name: ollama
+  #   ports:
+  #     - "11434:11434"
+  #   volumes:
+  #     - ollama_data:/root/.ollama
+  #   deploy:
+  #     resources:
+  #       reservations:
+  #         devices:
+  #           - driver: nvidia
+  #             count: 1
+  #             capabilities: [gpu]
+  #   # Pull model: docker exec ollama ollama pull llama3.2
 
   chat:
     build:
@@ -212,11 +221,13 @@ services:
     ports:
       - "7860:7860"
     environment:
-      OLLAMA_URL: http://ollama:11434
-      OLLAMA_MODEL: llama3.2
+      # For local Ollama: use host.docker.internal (Docker Desktop) or host gateway
+      OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.2}
       POSTGRES_DSN: postgresql://trading:trading@timescaledb:5432/trades
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
-      - ollama
       - timescaledb
     restart: unless-stopped
 
@@ -260,7 +271,7 @@ volumes:
   superset_data:
   prometheus_data:
   grafana_data:
-  ollama_data:
+  # ollama_data:  # Uncomment if using Docker Ollama
 
 networks:
   default:

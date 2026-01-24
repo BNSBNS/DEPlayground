@@ -26,7 +26,7 @@ ENV PATH="/opt/venv/bin:$PATH"
 WORKDIR /build
 
 # Copy only dependency files first (better layer caching)
-COPY pyproject.toml ./
+COPY pyproject.toml README.md ./
 COPY src/__init__.py ./src/
 
 # Install dependencies
