@@ -96,7 +96,7 @@ def create_consumer(
         "heartbeat.interval.ms": 15000,  # 15 seconds heartbeat
         # Fetch settings
         "fetch.min.bytes": 1,  # Don't wait for batches (low latency)
-        "fetch.max.wait.ms": 500,  # Max wait for fetch response
+        "fetch.wait.max.ms": 500,  # Max wait for fetch response
         # Client identification
         "client.id": f"trade-consumer-{settings.consumer_group}",
     }

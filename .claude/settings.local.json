@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(docker logs:*)",
+      "Bash(docker exec:*)",
+      "Bash(docker ps:*)",
+      "Bash(findstr:*)",
+      "Bash(docker restart:*)"
+    ]
+  }
+}

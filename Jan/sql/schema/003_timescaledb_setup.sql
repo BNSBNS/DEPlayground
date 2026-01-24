@@ -8,32 +8,17 @@
 -- Enable TimescaleDB extension
 CREATE EXTENSION IF NOT EXISTS timescaledb CASCADE;
 
--- Drop existing partitions and constraints that conflict with hypertable
--- (TimescaleDB handles its own partitioning)
-DO $$
-BEGIN
-    -- Drop the existing partitions if they exist
-    DROP TABLE IF EXISTS trade_aggregates_2026_01 CASCADE;
-    DROP TABLE IF EXISTS trade_aggregates_2026_02 CASCADE;
-    DROP TABLE IF EXISTS trade_aggregates_2026_03 CASCADE;
-    DROP TABLE IF EXISTS trade_aggregates_default CASCADE;
-
-    -- Detach partitions from parent (in case they weren't dropped)
-    -- This may fail if partitions don't exist, which is fine
-    EXCEPTION WHEN OTHERS THEN
-        NULL;
-END $$;
-
 -- Convert trade_aggregates to a hypertable
 -- chunk_time_interval: 1 day chunks for efficient pruning
--- migrate_data: true to move existing data into chunks
 SELECT create_hypertable(
     'trade_aggregates',
     'window_start',
     chunk_time_interval => INTERVAL '1 day',
-    migrate_data => true,
     if_not_exists => true
 );
+
+-- Add primary key (must include time column for hypertables)
+ALTER TABLE trade_aggregates ADD PRIMARY KEY (symbol, window_start);
 
 -- Enable compression for older data
 -- Compression reduces storage by 10-20x for time-series data
@@ -78,11 +63,11 @@ GROUP BY time_bucket('1 hour', window_start), symbol
 WITH NO DATA;
 
 -- Add refresh policy for continuous aggregate
--- Refreshes every 5 minutes, looking back 2 hours
+-- Window must cover at least 2 buckets (2 hours for hourly aggregates)
 SELECT add_continuous_aggregate_policy(
     'cagg_hourly_vwap',
-    start_offset => INTERVAL '2 hours',
-    end_offset => INTERVAL '1 minute',
+    start_offset => INTERVAL '3 hours',
+    end_offset => INTERVAL '1 hour',
     schedule_interval => INTERVAL '5 minutes',
     if_not_exists => true
 );
@@ -107,10 +92,11 @@ GROUP BY time_bucket('1 day', window_start), symbol
 WITH NO DATA;
 
 -- Refresh policy for daily summary
+-- Window must cover at least 2 buckets (2 days for daily aggregates)
 SELECT add_continuous_aggregate_policy(
     'cagg_daily_summary',
     start_offset => INTERVAL '3 days',
-    end_offset => INTERVAL '1 hour',
+    end_offset => INTERVAL '1 day',
     schedule_interval => INTERVAL '1 hour',
     if_not_exists => true
 );

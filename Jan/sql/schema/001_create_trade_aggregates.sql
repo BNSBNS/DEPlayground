@@ -5,13 +5,13 @@
 -- Design decisions:
 -- 1. Composite PK (symbol, window_start) enables idempotent upserts
 -- 2. NUMERIC(18,8) for exact decimal arithmetic (no floating point errors)
--- 3. Range partitioning by window_start for efficient time-range queries
+-- 3. TimescaleDB hypertable for automatic time-based partitioning (see 003_timescaledb_setup.sql)
 -- 4. Timestamps with timezone for unambiguous UTC storage
 
 -- Create extension for better timestamp handling
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
--- Main table: partitioned by time (monthly)
+-- Main table (will be converted to TimescaleDB hypertable in 003_timescaledb_setup.sql)
 CREATE TABLE IF NOT EXISTS trade_aggregates (
     -- Composite primary key for idempotent upserts
     symbol VARCHAR(20) NOT NULL,
@@ -30,34 +30,15 @@ CREATE TABLE IF NOT EXISTS trade_aggregates (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
-    -- Composite primary key
-    PRIMARY KEY (symbol, window_start),
-
     -- Constraint: max_price >= min_price
     CONSTRAINT valid_price_range CHECK (max_price >= min_price),
 
     -- Constraint: window_end > window_start
     CONSTRAINT valid_window_range CHECK (window_end > window_start)
-) PARTITION BY RANGE (window_start);
+);
 
--- Create partitions for current and next few months
--- In production, use pg_partman for automatic partition management
-CREATE TABLE IF NOT EXISTS trade_aggregates_2026_01
-    PARTITION OF trade_aggregates
-    FOR VALUES FROM ('2026-01-01 00:00:00+00') TO ('2026-02-01 00:00:00+00');
-
-CREATE TABLE IF NOT EXISTS trade_aggregates_2026_02
-    PARTITION OF trade_aggregates
-    FOR VALUES FROM ('2026-02-01 00:00:00+00') TO ('2026-03-01 00:00:00+00');
-
-CREATE TABLE IF NOT EXISTS trade_aggregates_2026_03
-    PARTITION OF trade_aggregates
-    FOR VALUES FROM ('2026-03-01 00:00:00+00') TO ('2026-04-01 00:00:00+00');
-
--- Default partition for data outside defined ranges
-CREATE TABLE IF NOT EXISTS trade_aggregates_default
-    PARTITION OF trade_aggregates
-    DEFAULT;
+-- Primary key added after hypertable conversion (TimescaleDB requirement)
+-- See 003_timescaledb_setup.sql
 
 
 -- Raw trades table (optional, for debugging and replay)

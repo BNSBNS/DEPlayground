@@ -33,13 +33,9 @@ CREATE INDEX IF NOT EXISTS idx_trade_aggregates_volume
     ON trade_aggregates USING BTREE (total_volume DESC)
     WHERE total_volume > 0;
 
--- Partial index for recent data (last 24 hours)
--- This accelerates queries on the "hot" portion of data
--- Note: Requires periodic recreation or use of expression with NOW()
--- In production, use a more sophisticated approach like pg_partman
-CREATE INDEX IF NOT EXISTS idx_trade_aggregates_recent
-    ON trade_aggregates USING BTREE (symbol, window_start DESC)
-    WHERE window_start >= NOW() - INTERVAL '24 hours';
+-- Note: Partial indexes with NOW() are not allowed (not immutable)
+-- The composite index idx_trade_aggregates_symbol_time handles recent data queries
+-- Time-based partitioning already provides efficient access to recent partitions
 
 
 -- ============================================================================
@@ -89,6 +85,8 @@ COMMENT ON INDEX idx_trade_aggregates_symbol_time IS
 
 COMMENT ON INDEX idx_trade_aggregates_volume IS
     'Partial index on volume for top-N queries';
+
+-- Note: idx_trade_aggregates_recent removed - NOW() not allowed in partial index predicates
 
 
 -- ============================================================================
