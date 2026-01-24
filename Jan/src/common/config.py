@@ -158,6 +158,32 @@ class ConsumerSettings(BaseSettings):
     )
 
 
+class APISettings(BaseSettings):
+    """API server configuration."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="API_",
+        extra="ignore",
+    )
+
+    cors_origins: list[str] = Field(
+        default=["http://localhost:3000", "http://localhost:8080"],
+        description="Allowed CORS origins. Use ['*'] only in development.",
+    )
+    cors_allow_credentials: bool = Field(
+        default=True,
+        description="Allow credentials in CORS requests",
+    )
+
+    @field_validator("cors_origins", mode="before")
+    @classmethod
+    def parse_cors_origins(cls, v: str | list[str]) -> list[str]:
+        """Parse CORS origins from comma-separated string or list."""
+        if isinstance(v, str):
+            return [origin.strip() for origin in v.split(",") if origin.strip()]
+        return v
+
+
 class Settings(BaseSettings):
     """Main application settings.
 
@@ -175,6 +201,7 @@ class Settings(BaseSettings):
     postgres: PostgresSettings = Field(default_factory=PostgresSettings)
     producer: ProducerSettings = Field(default_factory=ProducerSettings)
     consumer: ConsumerSettings = Field(default_factory=ConsumerSettings)
+    api: APISettings = Field(default_factory=APISettings)
 
     # Application-wide settings
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = Field(

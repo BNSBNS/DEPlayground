@@ -1,0 +1,267 @@
+version: "3.8"
+
+# Full E2E streaming stack for local development and testing
+# Includes: Kafka, TimescaleDB, Producer, Consumer, API, Superset, Monitoring
+
+x-common-env: &common-env
+  KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+  POSTGRES_DSN: postgresql://trading:trading@timescaledb:5432/trades
+  LOG_LEVEL: INFO
+
+services:
+  # ============================================
+  # INFRASTRUCTURE
+  # ============================================
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "2181"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - zookeeper_data:/var/lib/zookeeper/data
+      - zookeeper_logs:/var/lib/zookeeper/log
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: kafka
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_NUM_PARTITIONS: 6
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    healthcheck:
+      test: ["CMD", "kafka-topics", "--bootstrap-server", "localhost:9092", "--list"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka-ui
+    depends_on:
+      kafka:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
+      KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper:2181
+
+  # ============================================
+  # DATABASE (TimescaleDB)
+  # ============================================
+
+  timescaledb:
+    image: timescale/timescaledb:latest-pg16
+    container_name: timescaledb
+    environment:
+      POSTGRES_USER: trading
+      POSTGRES_PASSWORD: trading
+      POSTGRES_DB: trades
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./sql/schema/001_create_trade_aggregates.sql:/docker-entrypoint-initdb.d/001_create_trade_aggregates.sql:ro
+      - ./sql/schema/002_create_indexes.sql:/docker-entrypoint-initdb.d/002_create_indexes.sql:ro
+      - ./sql/schema/003_timescaledb_setup.sql:/docker-entrypoint-initdb.d/003_timescaledb_setup.sql:ro
+      - timescale_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U trading -d trades"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ============================================
+  # APPLICATIONS
+  # ============================================
+
+  producer:
+    build:
+      context: .
+      dockerfile: docker/producer/Dockerfile
+    container_name: trade-producer
+    environment:
+      <<: *common-env
+      PRODUCER_RATE: ${PRODUCER_RATE:-10}
+      PRODUCER_BURST_ENABLED: "true"
+    depends_on:
+      kafka:
+        condition: service_healthy
+    restart: unless-stopped
+
+  consumer:
+    build:
+      context: .
+      dockerfile: docker/consumer/Dockerfile
+    container_name: trade-consumer
+    environment:
+      <<: *common-env
+      KAFKA_CONSUMER_GROUP: trade-aggregator
+      WINDOW_DURATION_SECONDS: 60
+      LATE_EVENT_GRACE_SECONDS: 30
+    depends_on:
+      kafka:
+        condition: service_healthy
+      timescaledb:
+        condition: service_healthy
+    restart: unless-stopped
+
+  api:
+    build:
+      context: .
+      dockerfile: docker/api/Dockerfile
+    container_name: trade-api
+    ports:
+      - "8000:8000"
+    environment:
+      <<: *common-env
+      DEBUG: "false"
+    depends_on:
+      kafka:
+        condition: service_healthy
+      timescaledb:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+  # ============================================
+  # ANALYTICS (Superset)
+  # ============================================
+
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  superset:
+    image: apache/superset:3.1.0
+    container_name: superset
+    ports:
+      - "8088:8088"
+    environment:
+      SUPERSET_SECRET_KEY: "energy-trading-local-dev-secret-key-change-in-prod"
+      SQLALCHEMY_DATABASE_URI: "postgresql://trading:trading@timescaledb:5432/trades"
+      REDIS_URL: "redis://redis:6379/0"
+    volumes:
+      - superset_data:/app/superset_home
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    # Note: Run init commands after first start:
+    # docker exec superset superset db upgrade
+    # docker exec superset superset fab create-admin --username admin --firstname Admin --lastname User --email admin@local --password admin
+    # docker exec superset superset init
+
+  # ============================================
+  # CHAT WITH DATA (Natural Language Queries)
+  # ============================================
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    # Pull llama3.2 model on first run:
+    # docker exec ollama ollama pull llama3.2
+
+  chat:
+    build:
+      context: .
+      dockerfile: docker/chat/Dockerfile
+    container_name: trade-chat
+    ports:
+      - "7860:7860"
+    environment:
+      OLLAMA_URL: http://ollama:11434
+      OLLAMA_MODEL: llama3.2
+      POSTGRES_DSN: postgresql://trading:trading@timescaledb:5432/trades
+    depends_on:
+      - ollama
+      - timescaledb
+    restart: unless-stopped
+
+  # ============================================
+  # MONITORING
+  # ============================================
+
+  prometheus:
+    image: prom/prometheus:v2.47.0
+    container_name: prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.enable-lifecycle"
+
+  grafana:
+    image: grafana/grafana:10.2.0
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+
+volumes:
+  zookeeper_data:
+  zookeeper_logs:
+  kafka_data:
+  timescale_data:
+  redis_data:
+  superset_data:
+  prometheus_data:
+  grafana_data:
+  ollama_data:
+
+networks:
+  default:
+    name: trading-network

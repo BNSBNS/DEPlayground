@@ -25,6 +25,15 @@ dependencies = [
     # Utilities
     "structlog>=23.2.0",
     "python-dateutil>=2.8.0",
+
+    # API
+    "fastapi>=0.109.0",
+    "uvicorn[standard]>=0.27.0",
+    "websockets>=12.0",
+
+    # Chat interface
+    "gradio>=4.0.0",
+    "httpx>=0.25.0",
 ]
 
 [project.optional-dependencies]
@@ -42,6 +51,8 @@ dev = [
 [project.scripts]
 trade-producer = "src.producer.main:main"
 trade-consumer = "src.consumer.main:main"
+trade-api = "src.api.main:main"
+trade-chat = "src.chat.app:main"
 
 [build-system]
 requires = ["hatchling"]

@@ -1,0 +1,11 @@
+# Example Terraform Variables
+# Copy to terraform.tfvars and fill in values
+
+aws_region  = "us-east-1"
+environment = "dev"
+
+# Database password (use a strong password in production)
+db_password = "CHANGE_ME_STRONG_PASSWORD"
+
+# ECR repository URL (create ECR repo first)
+ecr_repository_url = "123456789012.dkr.ecr.us-east-1.amazonaws.com/trading"

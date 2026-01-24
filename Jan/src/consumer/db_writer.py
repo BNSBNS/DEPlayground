@@ -104,6 +104,10 @@ class DatabaseWriter:
         except psycopg.OperationalError as e:
             logger.error("Database connection error", error=str(e))
             if self._conn and not self._conn.closed:
+                try:
+                    self._conn.rollback()
+                except Exception:
+                    pass  # Ignore rollback errors on a failed connection
                 self._conn.close()
             self._conn = None
             raise

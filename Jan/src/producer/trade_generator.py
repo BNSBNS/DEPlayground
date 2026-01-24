@@ -7,14 +7,21 @@ including normal trading periods and burst patterns during market volatility.
 import random
 from datetime import UTC, datetime
 from decimal import ROUND_HALF_UP, Decimal
-from typing import Iterator
+from typing import Iterator, TypedDict
 from uuid import uuid4
 
 from src.common.models import TradeEvent, TradeSide
 
 
+class SymbolConfig(TypedDict):
+    """Configuration for a trading symbol."""
+
+    base_price: Decimal
+    volatility: float
+
+
 # Energy trading symbols with realistic base prices
-SYMBOLS: dict[str, dict[str, Decimal | float]] = {
+SYMBOLS: dict[str, SymbolConfig] = {
     "POWER_DE": {"base_price": Decimal("85.50"), "volatility": 0.02},  # German power
     "POWER_FR": {"base_price": Decimal("82.30"), "volatility": 0.025},  # French power
     "POWER_NL": {"base_price": Decimal("88.20"), "volatility": 0.022},  # Dutch power
@@ -64,7 +71,7 @@ class TradeGenerator:
 
         # Track current prices for random walk simulation
         self._current_prices: dict[str, Decimal] = {
-            symbol: SYMBOLS[symbol]["base_price"]  # type: ignore[misc]
+            symbol: SYMBOLS[symbol]["base_price"]
             for symbol in self.symbols
         }
 
@@ -75,19 +82,19 @@ class TradeGenerator:
         """
         config = SYMBOLS[symbol]
         base_price = config["base_price"]
-        volatility = float(config["volatility"])
+        volatility = config["volatility"]
 
         current = self._current_prices[symbol]
 
         # Random walk with mean reversion
         change_pct = self.rng.gauss(0, volatility)
-        mean_reversion = float((base_price - current) / base_price) * 0.1  # type: ignore[operator]
+        mean_reversion = float((base_price - current) / base_price) * 0.1
 
         new_price = current * Decimal(str(1 + change_pct + mean_reversion))
 
         # Bound prices to +/- 20% of base
-        min_price = base_price * Decimal("0.8")  # type: ignore[operator]
-        max_price = base_price * Decimal("1.2")  # type: ignore[operator]
+        min_price = base_price * Decimal("0.8")
+        max_price = base_price * Decimal("1.2")
         new_price = max(min_price, min(max_price, new_price))
 
         # Round to 2 decimal places (typical for energy markets)
@@ -162,6 +169,6 @@ class TradeGenerator:
     def reset_prices(self) -> None:
         """Reset all prices to their base values."""
         self._current_prices = {
-            symbol: SYMBOLS[symbol]["base_price"]  # type: ignore[misc]
+            symbol: SYMBOLS[symbol]["base_price"]
             for symbol in self.symbols
         }

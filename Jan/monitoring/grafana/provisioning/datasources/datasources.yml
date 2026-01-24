@@ -1,0 +1,27 @@
+# Grafana datasource provisioning
+
+apiVersion: 1
+
+datasources:
+  # Prometheus for metrics
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+
+  # TimescaleDB for trade data
+  - name: TimescaleDB
+    type: postgres
+    url: timescaledb:5432
+    database: trades
+    user: trading
+    secureJsonData:
+      password: trading
+    jsonData:
+      sslmode: disable
+      maxOpenConns: 5
+      maxIdleConns: 2
+      connMaxLifetime: 14400
+    editable: false

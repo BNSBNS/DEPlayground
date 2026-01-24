@@ -27,59 +27,83 @@ A production-grade real-time analytics platform for energy trading, featuring Ka
 
 ### Prerequisites
 
-- Python 3.12+
-- Docker and Docker Compose
+- Docker and Docker Compose (required)
+- Python 3.12+ (for local development)
 - (Optional) Conda for environment management
 - (Optional) Kind for Kubernetes testing
 
-### Option 1: Using Conda (Recommended)
+---
+
+### Option 1: Run Everything with Docker (Easiest)
+
+This starts the entire stack including producer, consumer, Kafka, and PostgreSQL:
 
 ```bash
-# Create and activate conda environment
+# Start the full stack
+docker-compose up -d
+
+# Verify all services are running
+docker-compose ps
+
+# Watch the logs (producer generating trades, consumer aggregating)
+docker-compose logs -f producer consumer
+
+# Query aggregates in the database
+docker-compose exec postgres psql -U trading -d trades -c \
+  "SELECT symbol, window_start, vwap, trade_count FROM trade_aggregates ORDER BY window_start DESC LIMIT 10;"
+```
+
+**Stop everything:**
+```bash
+docker-compose down          # Stop and remove containers
+docker-compose down -v       # Also remove data volumes (fresh start)
+```
+
+---
+
+### Option 2: Local Development (Python + Docker Infrastructure)
+
+Use this when you want to run the Python code locally for debugging/development.
+
+**Step 1: Set up Python environment**
+
+Using Conda (recommended):
+```bash
 conda env create -f environment.yml
 conda activate energy-trading
-
-# Install project in editable mode
 pip install -e ".[dev]"
 ```
 
-### Option 2: Using pip/venv
-
+Or using pip/venv:
 ```bash
-# Create virtual environment
 python -m venv .venv
 source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-
-# Install project
 pip install -e ".[dev]"
 ```
 
-### Start Infrastructure
-
+**Step 2: Start infrastructure only**
 ```bash
-# Start Kafka, Zookeeper, and PostgreSQL
-docker-compose up -d kafka postgres
+# Start Zookeeper, Kafka, PostgreSQL (schema auto-initialized via volume mount)
+docker-compose up -d zookeeper kafka postgres kafka-init
 
 # Wait for services to be healthy
 docker-compose ps
-
-# Initialize database schema
-docker-compose exec postgres psql -U trading -d trades \
-  -f /docker-entrypoint-initdb.d/001_create_trade_aggregates.sql
 ```
 
-### Run Services
-
+**Step 3: Run services locally**
 ```bash
 # Terminal 1: Start producer
 python -m src.producer.main
 
 # Terminal 2: Start consumer
 python -m src.consumer.main
+
+# Terminal 3 (optional): Start API server
+python -m src.api.main
+# API docs available at http://localhost:8000/docs
 ```
 
-### Verify Data Flow
-
+**Step 4: Verify data flow**
 ```bash
 # Check aggregates in database
 docker-compose exec postgres psql -U trading -d trades -c \
@@ -141,6 +165,9 @@ Jan/
 │   └── queries/          # Analytical queries (Q7)
 ├── docker/               # Dockerfiles (Q9)
 ├── k8s/                  # Kubernetes manifests (Q10)
+├── terraform/            # AWS infrastructure (ECS, MSK, RDS)
+│   ├── modules/          # Reusable Terraform modules
+│   └── environments/     # Environment-specific configs (dev)
 ├── scripts/              # CD simulation scripts (Q13)
 ├── docs/                 # Architecture and monitoring docs (Q1, Q2, Q11, Q14)
 ├── tests/                # Unit and integration tests
@@ -187,6 +214,7 @@ See [.env.example](.env.example) for complete configuration options.
 | [STREAMING_SEMANTICS.md](docs/STREAMING_SEMANTICS.md) | Delivery guarantees, CAP/ACID, upsert patterns (Q2, Q5-6, Q8-10) |
 | [FAILURE_SCENARIOS.md](docs/FAILURE_SCENARIOS.md) | Failure modes and recovery (Q11) |
 | [MONITORING_STRATEGY.md](docs/MONITORING_STRATEGY.md) | Metrics and alerts (Q14) |
+| [VISUALIZATION_INTEGRATION.md](docs/VISUALIZATION_INTEGRATION.md) | PowerBI, Grafana, web frontend integration |
 
 ### Operations
 
@@ -194,6 +222,7 @@ See [.env.example](.env.example) for complete configuration options.
 |----------|-------------|
 | [K8S_AUTOSCALING_HA.md](docs/K8S_AUTOSCALING_HA.md) | Autoscaling, HA, recovery validation (Q1) |
 | [CDC_SCD_CACHING.md](docs/CDC_SCD_CACHING.md) | CDC, SCD, caching strategies (Q4, Q7) |
+| [terraform/](terraform/) | AWS deployment with ECS, MSK, RDS |
 
 ### SQL Queries
 
@@ -229,6 +258,143 @@ See [k8s/](k8s/) for deployment manifests including:
 - Resource requests/limits (Guaranteed QoS)
 - Liveness and readiness probes
 - HPA for auto-scaling based on consumer lag
+
+## Terraform Deployment (AWS)
+
+Deploy the full stack to AWS using Terraform with ECS Fargate, MSK (Kafka), and RDS PostgreSQL.
+
+### Prerequisites
+
+- [Terraform](https://developer.hashicorp.com/terraform/install) >= 1.5.0
+- AWS CLI configured with appropriate credentials
+- An ECR repository for Docker images
+
+### Infrastructure Overview
+
+The Terraform configuration creates:
+
+| Resource | Service | Description |
+|----------|---------|-------------|
+| VPC | Networking | 3-AZ VPC with public/private subnets, NAT gateways |
+| MSK | Kafka | 3-broker managed Kafka cluster |
+| RDS | PostgreSQL | PostgreSQL 16 with performance insights |
+| ECS Fargate | Compute | API and Consumer services with ALB |
+| CloudWatch | Logging | Log groups for all services |
+
+### Step 1: Create ECR Repository
+
+```bash
+# Create ECR repository for images
+aws ecr create-repository --repository-name trading --region us-east-1
+
+# Get the repository URL (save this for terraform.tfvars)
+aws ecr describe-repositories --repository-names trading --query 'repositories[0].repositoryUri' --output text
+```
+
+### Step 2: Build and Push Docker Images
+
+```bash
+# Authenticate Docker with ECR
+aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin <account-id>.dkr.ecr.us-east-1.amazonaws.com
+
+# Build and push images (from Jan/ directory)
+docker build -f docker/api/Dockerfile -t <ecr-url>:api-latest .
+docker build -f docker/consumer/Dockerfile -t <ecr-url>:consumer-latest .
+
+docker push <ecr-url>:api-latest
+docker push <ecr-url>:consumer-latest
+```
+
+### Step 3: Configure Terraform Variables
+
+```bash
+cd terraform/environments/dev
+
+# Copy example variables file
+cp terraform.tfvars.example terraform.tfvars
+
+# Edit terraform.tfvars with your values
+```
+
+**terraform.tfvars:**
+```hcl
+aws_region         = "us-east-1"
+environment        = "dev"
+db_password        = "YourSecurePassword123!"  # Use a strong password
+ecr_repository_url = "123456789012.dkr.ecr.us-east-1.amazonaws.com/trading"
+```
+
+### Step 4: Deploy Infrastructure
+
+```bash
+cd terraform/environments/dev
+
+# Initialize Terraform
+terraform init
+
+# Review the execution plan
+terraform plan
+
+# Apply the configuration
+terraform apply
+```
+
+### Step 5: Verify Deployment
+
+```bash
+# Get outputs
+terraform output
+
+# Test the API
+curl http://$(terraform output -raw api_url)/health
+
+# View API docs
+echo "API Docs: http://$(terraform output -raw api_url)/docs"
+```
+
+### Terraform Outputs
+
+After deployment, Terraform outputs these values:
+
+| Output | Description |
+|--------|-------------|
+| `vpc_id` | VPC identifier |
+| `kafka_bootstrap_servers` | MSK broker connection string |
+| `rds_endpoint` | PostgreSQL endpoint |
+| `api_url` | Public API URL (ALB DNS) |
+| `ecs_cluster_arn` | ECS cluster ARN |
+
+### Tear Down
+
+```bash
+# Destroy all resources (WARNING: deletes everything)
+terraform destroy
+```
+
+### Remote State (Recommended for Teams)
+
+For team environments, enable S3 backend for state management:
+
+```bash
+# Create S3 bucket for state
+aws s3 mb s3://trading-terraform-state --region us-east-1
+aws s3api put-bucket-versioning --bucket trading-terraform-state --versioning-configuration Status=Enabled
+
+# Create DynamoDB table for locking
+aws dynamodb create-table \
+  --table-name terraform-locks \
+  --attribute-definitions AttributeName=LockID,AttributeType=S \
+  --key-schema AttributeName=LockID,KeyType=HASH \
+  --billing-mode PAY_PER_REQUEST
+```
+
+Then uncomment the backend block in `terraform/environments/dev/main.tf`.
+
+### Notes and Limitations
+
+- **TimescaleDB**: The RDS parameter group includes TimescaleDB settings, but standard AWS RDS does not support TimescaleDB as a native extension. For TimescaleDB support, use [Timescale Cloud](https://www.timescale.com/cloud) or remove the `shared_preload_libraries` parameter from `modules/rds/main.tf`.
+- **Cost**: MSK and RDS incur significant AWS charges. For development, consider using Docker Compose locally instead.
+- **Multi-AZ**: Dev environment uses single-AZ RDS by default. Enable `multi_az = true` for production.
 
 ## Trade-offs and Assumptions
 

@@ -6,7 +6,6 @@ It initializes logging, configuration, and runs the producer.
 
 import signal
 import sys
-from typing import NoReturn
 
 from src.common.config import get_settings
 from src.common.logging_config import bind_context, configure_logging, get_logger
@@ -25,7 +24,7 @@ def signal_handler(signum: int, frame: object) -> None:
     sys.exit(0)
 
 
-def main() -> NoReturn:
+def main() -> None:
     """Main entry point for the trade producer."""
     global _producer
 

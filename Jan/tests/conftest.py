@@ -9,6 +9,21 @@ import pytest
 from src.common.models import TradeAggregate, TradeEvent, TradeSide
 
 
+def pytest_addoption(parser):
+    """Add custom pytest command-line options."""
+    parser.addoption(
+        "--run-e2e",
+        action="store_true",
+        default=False,
+        help="Run E2E tests (requires Docker stack to be running)",
+    )
+
+
+def pytest_configure(config):
+    """Configure custom pytest markers."""
+    config.addinivalue_line("markers", "e2e: End-to-end tests requiring Docker stack")
+
+
 @pytest.fixture
 def sample_trade() -> TradeEvent:
     """Create a sample trade event for testing."""

@@ -90,6 +90,7 @@ class WindowedAggregator:
         self,
         window_duration_seconds: int = 60,
         late_event_grace_seconds: int = 30,
+        max_windows: int = 1000,
     ) -> None:
         """Initialize the windowed aggregator.
 
@@ -97,15 +98,21 @@ class WindowedAggregator:
             window_duration_seconds: Window duration in seconds (default 60).
             late_event_grace_seconds: Grace period for late events before
                                      evicting window state.
+            max_windows: Maximum number of active windows to prevent memory leaks.
+                        Oldest windows are evicted when limit is exceeded.
         """
         self.window_duration = timedelta(seconds=window_duration_seconds)
         self.late_grace_period = timedelta(seconds=late_event_grace_seconds)
+        self.max_windows = max_windows
 
         # Window state: (symbol, window_start) -> WindowState
         self._windows: dict[tuple[str, datetime], WindowState] = {}
 
         # Track the latest event time for watermark
         self._latest_event_time: datetime | None = None
+
+        # Track evicted windows for monitoring
+        self._evicted_window_count: int = 0
 
     def _get_window_start(self, event_time: datetime) -> datetime:
         """Calculate the window start time for an event.
@@ -153,6 +160,10 @@ class WindowedAggregator:
                 symbol=trade.symbol,
                 window_start=window_start.isoformat(),
             )
+
+            # Evict oldest windows if we exceed max_windows limit
+            if len(self._windows) > self.max_windows:
+                self._evict_oldest_windows()
 
         # Add trade to window
         self._windows[key].add_trade(trade)
@@ -219,6 +230,55 @@ class WindowedAggregator:
 
         return completed
 
+    def _evict_oldest_windows(self) -> list[TradeAggregate]:
+        """Evict oldest windows when max_windows limit is exceeded.
+
+        This prevents memory leaks from future-dated events or abnormal conditions.
+        Evicted windows are flushed and returned as aggregates.
+
+        Returns:
+            List of aggregates from evicted windows.
+        """
+        # Calculate how many windows to evict (remove 10% to avoid frequent evictions)
+        evict_count = max(1, len(self._windows) - self.max_windows + self.max_windows // 10)
+
+        # Sort windows by window_start time (oldest first)
+        sorted_keys = sorted(self._windows.keys(), key=lambda k: k[1])
+        keys_to_evict = sorted_keys[:evict_count]
+
+        evicted_aggregates: list[TradeAggregate] = []
+
+        for key in keys_to_evict:
+            symbol, window_start = key
+            state = self._windows[key]
+
+            if not state.is_empty():
+                window_end = self._get_window_end(window_start)
+                aggregate = TradeAggregate(
+                    symbol=symbol,
+                    window_start=window_start,
+                    window_end=window_end,
+                    vwap=state.compute_vwap(),
+                    total_volume=state.total_volume,
+                    trade_count=state.trade_count,
+                    max_price=state.max_price or Decimal("0"),
+                    min_price=state.min_price or Decimal("0"),
+                    total_value=state.total_value,
+                )
+                evicted_aggregates.append(aggregate)
+
+            del self._windows[key]
+            self._evicted_window_count += 1
+
+        logger.warning(
+            "Evicted windows due to max_windows limit",
+            evicted_count=len(keys_to_evict),
+            total_evicted=self._evicted_window_count,
+            remaining_windows=len(self._windows),
+        )
+
+        return evicted_aggregates
+
     def flush_all(self) -> list[TradeAggregate]:
         """Flush all windows regardless of completion status.
 
@@ -260,6 +320,8 @@ class WindowedAggregator:
         """
         return {
             "active_windows": len(self._windows),
+            "max_windows": self.max_windows,
+            "evicted_windows": self._evicted_window_count,
             "latest_event_time": (
                 self._latest_event_time.isoformat()
                 if self._latest_event_time

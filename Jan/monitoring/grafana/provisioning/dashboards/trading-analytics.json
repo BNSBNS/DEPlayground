@@ -1,0 +1,82 @@
+{
+  "dashboard": {
+    "title": "Trading Analytics",
+    "uid": "trading-analytics",
+    "timezone": "utc",
+    "refresh": "30s",
+    "schemaVersion": 39,
+    "templating": {
+      "list": [
+        {
+          "name": "symbol",
+          "type": "query",
+          "datasource": "TimescaleDB",
+          "query": "SELECT DISTINCT symbol FROM trade_aggregates ORDER BY symbol",
+          "multi": true,
+          "includeAll": true
+        }
+      ]
+    },
+    "panels": [
+      {
+        "title": "VWAP by Symbol",
+        "type": "timeseries",
+        "gridPos": {"x": 0, "y": 0, "w": 16, "h": 8},
+        "datasource": "TimescaleDB",
+        "targets": [{
+          "rawSql": "SELECT window_start AS time, symbol, vwap FROM trade_aggregates WHERE window_start > NOW() - INTERVAL '1 hour' AND ($__all OR symbol IN ($symbol)) ORDER BY window_start",
+          "format": "time_series"
+        }],
+        "fieldConfig": {"defaults": {"unit": "currencyEUR"}}
+      },
+      {
+        "title": "Current VWAP",
+        "type": "stat",
+        "gridPos": {"x": 16, "y": 0, "w": 8, "h": 8},
+        "datasource": "TimescaleDB",
+        "targets": [{
+          "rawSql": "SELECT symbol, AVG(vwap) as vwap FROM trade_aggregates WHERE window_start > NOW() - INTERVAL '5 minutes' GROUP BY symbol ORDER BY symbol",
+          "format": "table"
+        }],
+        "fieldConfig": {"defaults": {"unit": "currencyEUR"}}
+      },
+      {
+        "title": "Volume by Symbol (Last Hour)",
+        "type": "barchart",
+        "gridPos": {"x": 0, "y": 8, "w": 12, "h": 8},
+        "datasource": "TimescaleDB",
+        "targets": [{
+          "rawSql": "SELECT symbol, SUM(total_volume) as volume FROM trade_aggregates WHERE window_start > NOW() - INTERVAL '1 hour' GROUP BY symbol ORDER BY volume DESC",
+          "format": "table"
+        }]
+      },
+      {
+        "title": "Trade Count Heatmap",
+        "type": "timeseries",
+        "gridPos": {"x": 12, "y": 8, "w": 12, "h": 8},
+        "datasource": "TimescaleDB",
+        "targets": [{
+          "rawSql": "SELECT window_start AS time, symbol, trade_count FROM trade_aggregates WHERE window_start > NOW() - INTERVAL '1 hour' ORDER BY window_start",
+          "format": "time_series"
+        }]
+      },
+      {
+        "title": "Price Range (High-Low)",
+        "type": "timeseries",
+        "gridPos": {"x": 0, "y": 16, "w": 24, "h": 8},
+        "datasource": "TimescaleDB",
+        "targets": [
+          {
+            "rawSql": "SELECT window_start AS time, symbol || ' High' as metric, max_price as value FROM trade_aggregates WHERE window_start > NOW() - INTERVAL '1 hour' AND ($__all OR symbol IN ($symbol)) ORDER BY window_start",
+            "format": "time_series"
+          },
+          {
+            "rawSql": "SELECT window_start AS time, symbol || ' Low' as metric, min_price as value FROM trade_aggregates WHERE window_start > NOW() - INTERVAL '1 hour' AND ($__all OR symbol IN ($symbol)) ORDER BY window_start",
+            "format": "time_series"
+          }
+        ],
+        "fieldConfig": {"defaults": {"unit": "currencyEUR"}}
+      }
+    ]
+  }
+}
