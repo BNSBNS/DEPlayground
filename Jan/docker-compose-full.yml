@@ -118,6 +118,8 @@ services:
       context: .
       dockerfile: docker/consumer/Dockerfile
     container_name: trade-consumer
+    ports:
+      - "8001:8001"  # Prometheus metrics
     environment:
       <<: *common-env
       KAFKA_CONSUMER_GROUP: trade-aggregator

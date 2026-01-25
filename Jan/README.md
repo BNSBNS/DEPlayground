@@ -59,6 +59,28 @@ docker-compose down          # Stop and remove containers
 docker-compose down -v       # Also remove data volumes (fresh start)
 ```
 
+**Full Stack with Analytics & Monitoring:**
+
+For a complete environment including TimescaleDB, Superset, Kafka UI, Prometheus, Grafana, and the chat interface:
+
+```bash
+# Start the full analytics stack
+docker-compose -f docker-compose-full.yml up -d
+
+# Services available:
+# - API:        http://localhost:8000/docs
+# - Chat UI:    http://localhost:7860
+# - Kafka UI:   http://localhost:8080
+# - Superset:   http://localhost:8088
+# - Grafana:    http://localhost:3000
+# - Prometheus: http://localhost:9090
+
+# Initialize Superset (first time only)
+docker exec superset superset db upgrade
+docker exec superset superset fab create-admin --username admin --firstname Admin --lastname User --email admin@local --password admin
+docker exec superset superset init
+```
+
 ---
 
 ### Option 2: Local Development (Python + Docker Infrastructure)
@@ -159,6 +181,8 @@ Jan/
 │   ├── common/           # Shared modules (models, config, utils)
 │   ├── producer/         # Trade event producer (Q3)
 │   ├── consumer/         # Streaming consumer with DLQ (Q4, Q5)
+│   ├── api/              # FastAPI REST and WebSocket endpoints
+│   ├── chat/             # Natural language query interface (Gradio + Ollama)
 │   └── analytics/        # Time-series processor (Q8)
 ├── sql/
 │   ├── schema/           # Database DDL (Q6)
@@ -210,6 +234,7 @@ See [.env.example](.env.example) for complete configuration options.
 
 | Document | Description |
 |----------|-------------|
+| [ASSESSMENT.md](docs/ASSESSMENT.md) | Original assessment questions and senior engineer guidance |
 | [ARCHITECTURE.md](docs/architecture/ARCHITECTURE.md) | End-to-end system design (Q1) |
 | [STREAMING_SEMANTICS.md](docs/STREAMING_SEMANTICS.md) | Delivery guarantees, CAP/ACID, upsert patterns (Q2, Q5-6, Q8-10) |
 | [FAILURE_SCENARIOS.md](docs/FAILURE_SCENARIOS.md) | Failure modes and recovery (Q11) |

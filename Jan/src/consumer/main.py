@@ -10,6 +10,7 @@ import sys
 from src.common.config import get_settings
 from src.common.logging_config import bind_context, configure_logging, get_logger
 from src.consumer.kafka_consumer import TradeConsumer
+from src.consumer.metrics import start_metrics_server
 
 # Global consumer instance for signal handling
 _consumer: TradeConsumer | None = None
@@ -51,6 +52,10 @@ def main() -> None:
     # Set up signal handlers for graceful shutdown
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
+
+    # Start Prometheus metrics server
+    start_metrics_server(port=8001)
+    logger.info("Prometheus metrics server started", port=8001)
 
     # Create and run the consumer
     _consumer = TradeConsumer(

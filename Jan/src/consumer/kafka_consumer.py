@@ -10,6 +10,7 @@ This module provides a high-level consumer that:
 import json
 import signal
 import sys
+import time
 from datetime import UTC, datetime
 from typing import Any, NoReturn
 
@@ -23,6 +24,7 @@ from src.common.models import TradeEvent
 from src.consumer.db_writer import DatabaseWriter
 from src.consumer.dlq_handler import AlertingDLQHandler, DLQHandler
 from src.consumer.windowed_aggregator import WindowedAggregator
+from src.consumer import metrics
 
 logger = get_logger(__name__)
 
@@ -117,6 +119,7 @@ class TradeConsumer:
         """
         partition = msg.partition()
         offset = msg.offset()
+        start_time = time.perf_counter()
 
         try:
             # Parse and validate
@@ -127,12 +130,26 @@ class TradeConsumer:
 
             # Write completed aggregates to database
             if completed_aggregates:
+                db_start = time.perf_counter()
                 written = self._db_writer.write_aggregates_batch(completed_aggregates)
+                metrics.db_write_duration.observe(time.perf_counter() - db_start)
                 self._aggregates_written += written
+                for agg in completed_aggregates:
+                    metrics.aggregates_written.labels(symbol=agg.symbol).inc()
 
             # Commit offset after successful processing
             self._consumer.commit(msg)
             self._messages_processed += 1
+
+            # Update metrics
+            metrics.messages_processed.labels(symbol=trade.symbol).inc()
+            metrics.active_windows.set(self._aggregator.get_active_window_count())
+            event_age = (datetime.now(UTC) - trade.event_timestamp).total_seconds()
+            metrics.data_freshness.set(event_age)
+            metrics.consumer_lag.labels(partition=str(partition)).set(event_age)
+
+            # Record processing duration
+            metrics.processing_duration.observe(time.perf_counter() - start_time)
 
             # Log progress periodically
             if self._messages_processed % 1000 == 0:
@@ -141,6 +158,7 @@ class TradeConsumer:
         except (json.JSONDecodeError, ValidationError, ValueError) as e:
             # Handle malformed messages via DLQ
             self._errors_handled += 1
+            metrics.dlq_messages.labels(error_type=type(e).__name__).inc()
             raw_value = msg.value() or b""
             self._dlq_handler.handle_failed_message(
                 raw_message=raw_value,
