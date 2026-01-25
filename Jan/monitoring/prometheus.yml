@@ -10,13 +10,13 @@ scrape_configs:
     static_configs:
       - targets: ["localhost:9090"]
 
-  # Trade API metrics
-  - job_name: "trade-api"
-    static_configs:
-      - targets: ["api:8000"]
-    metrics_path: /metrics
+  # Trade API metrics (disabled - no /metrics endpoint yet)
+  # - job_name: "trade-api"
+  #   static_configs:
+  #     - targets: ["api:8000"]
+  #   metrics_path: /metrics
 
-  # Trade Consumer metrics (if exposed)
+  # Trade Consumer metrics
   - job_name: "trade-consumer"
     static_configs:
       - targets: ["consumer:8001"]

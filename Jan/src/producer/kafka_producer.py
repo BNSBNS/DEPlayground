@@ -18,6 +18,7 @@ from src.common.kafka_utils import (
 from src.common.logging_config import get_logger
 from src.common.models import TradeEvent
 from src.producer.trade_generator import TradeGenerator
+from src.producer import metrics
 
 logger = get_logger(__name__)
 
@@ -73,6 +74,7 @@ class TradeProducer:
         """Handle delivery confirmation or failure."""
         if err is not None:
             self._failed_deliveries += 1
+            metrics.trades_failed.inc()
             logger.error(
                 "Trade delivery failed",
                 error=str(err),
@@ -90,6 +92,7 @@ class TradeProducer:
         Raises:
             KafkaException: If producing fails immediately (buffer full, etc.)
         """
+        start_time = time.perf_counter()
         try:
             self.producer.produce(
                 topic=self.kafka_settings.topic,
@@ -98,6 +101,7 @@ class TradeProducer:
                 callback=self._delivery_callback,
             )
             self._total_produced += 1
+            metrics.trades_produced.labels(symbol=trade.symbol).inc()
 
             # Trigger delivery callbacks without blocking
             self.producer.poll(0)
@@ -114,6 +118,9 @@ class TradeProducer:
                 callback=self._delivery_callback,
             )
             self._total_produced += 1
+            metrics.trades_produced.labels(symbol=trade.symbol).inc()
+        finally:
+            metrics.produce_duration.observe(time.perf_counter() - start_time)
 
     def run(
         self,
@@ -182,6 +189,10 @@ class TradeProducer:
                 # Determine current rate and generate trade
                 current_rate = burst_rate if in_burst else rate
                 trade = self.generator.generate_trade(is_burst=in_burst)
+
+                # Update metrics
+                metrics.current_rate.set(current_rate)
+                metrics.burst_mode_active.set(1 if in_burst else 0)
 
                 # Produce the trade
                 self.produce_trade(trade)

@@ -10,6 +10,7 @@ import sys
 from src.common.config import get_settings
 from src.common.logging_config import bind_context, configure_logging, get_logger
 from src.producer.kafka_producer import TradeProducer
+from src.producer.metrics import start_metrics_server
 
 # Global producer instance for signal handling
 _producer: TradeProducer | None = None
@@ -50,6 +51,10 @@ def main() -> None:
     # Set up signal handlers for graceful shutdown
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
+
+    # Start Prometheus metrics server
+    start_metrics_server(port=8002)
+    logger.info("Prometheus metrics server started", port=8002)
 
     # Create and run the producer
     _producer = TradeProducer(

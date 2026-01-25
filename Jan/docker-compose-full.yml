@@ -104,6 +104,8 @@ services:
       context: .
       dockerfile: docker/producer/Dockerfile
     container_name: trade-producer
+    ports:
+      - "8002:8002"  # Prometheus metrics
     environment:
       <<: *common-env
       PRODUCER_RATE: ${PRODUCER_RATE:-10}
