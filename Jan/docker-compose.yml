@@ -1,49 +1,45 @@
 version: "3.8"
 
 services:
-  # Zookeeper for Kafka coordination
-  zookeeper:
-    image: confluentinc/cp-zookeeper:7.5.0
-    container_name: zookeeper
-    environment:
-      ZOOKEEPER_CLIENT_PORT: 2181
-      ZOOKEEPER_TICK_TIME: 2000
-    ports:
-      - "2181:2181"
-    healthcheck:
-      test: ["CMD", "nc", "-z", "localhost", "2181"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    networks:
-      - trading-network
-
-  # Kafka message broker
+  # Kafka in KRaft mode (no Zookeeper required)
   kafka:
     image: confluentinc/cp-kafka:7.5.0
     container_name: kafka
-    depends_on:
-      zookeeper:
-        condition: service_healthy
     ports:
       - "9092:9092"
       - "29092:29092"
+      - "9093:9093"
     environment:
-      KAFKA_BROKER_ID: 1
-      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      # KRaft mode settings
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+
+      # Listener configuration
+      KAFKA_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://0.0.0.0:9092,CONTROLLER://kafka:9093
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT,CONTROLLER:PLAINTEXT
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+
+      # Topic settings
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
-      # Production-like settings (single node dev override)
       KAFKA_NUM_PARTITIONS: 6
       KAFKA_DEFAULT_REPLICATION_FACTOR: 1
       KAFKA_MIN_INSYNC_REPLICAS: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+
+      # Log settings
       KAFKA_LOG_RETENTION_HOURS: 168
       KAFKA_LOG_RETENTION_BYTES: 1073741824
-      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+
+      # KRaft cluster ID (must be consistent across restarts)
+      CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
+    volumes:
+      - kafka_data:/var/lib/kafka/data
     healthcheck:
       test: ["CMD", "kafka-topics", "--bootstrap-server", "localhost:9092", "--list"]
       interval: 10s
@@ -64,6 +60,7 @@ services:
       "
       echo 'Creating Kafka topics...'
       kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic trades --partitions 6 --replication-factor 1
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic trades-raw --partitions 6 --replication-factor 1
       kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic trades-dlq --partitions 3 --replication-factor 1
       echo 'Topics created successfully:'
       kafka-topics --bootstrap-server kafka:29092 --list
@@ -92,7 +89,7 @@ services:
     networks:
       - trading-network
 
-  # Trade event producer
+  # Trade event producer (synthetic data generator)
   producer:
     build:
       context: .
@@ -110,6 +107,77 @@ services:
       PRODUCER_BURST_ENABLED: ${PRODUCER_BURST_ENABLED:-true}
       PRODUCER_BURST_MULTIPLIER: ${PRODUCER_BURST_MULTIPLIER:-5}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    restart: unless-stopped
+    networks:
+      - trading-network
+
+  # Multi-source data ingestion service
+  ingestion:
+    build:
+      context: .
+      dockerfile: docker/ingestion/Dockerfile
+    container_name: trade-ingestion
+    depends_on:
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+    ports:
+      - "8003:8003"  # Prometheus metrics
+    environment:
+      # Kafka settings
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      KAFKA_TOPIC: trades
+      KAFKA_DLQ_TOPIC: trades-dlq
+
+      # Ingestion settings
+      INGESTION_METRICS_PORT: 8003
+      INGESTION_METRICS_ENABLED: "true"
+      INGESTION_DLQ_ENABLED: "true"
+
+      # WebSocket source (Finnhub)
+      WS_ENABLED: ${WS_ENABLED:-false}
+      WS_NAME: finnhub
+      WS_URL: wss://ws.finnhub.io
+      WS_API_KEY: ${FINNHUB_API_KEY:-}
+      WS_SYMBOLS: ${WS_SYMBOLS:-AAPL,GOOGL,MSFT,AMZN}
+
+      # SSE source (DexPaprika)
+      SSE_ENABLED: ${SSE_ENABLED:-false}
+      SSE_NAME: dexpaprika
+      SSE_URL: https://api.dexpaprika.com/sse/prices
+      SSE_SYMBOLS: ${SSE_SYMBOLS:-BTC,ETH,SOL}
+
+      # Polling source (ENTSO-E)
+      POLLING_ENABLED: ${POLLING_ENABLED:-false}
+      POLLING_NAME: entsoe
+      POLLING_URL: https://web-api.tp.entsoe.eu/api
+      POLLING_API_KEY: ${ENTSOE_API_KEY:-}
+      POLLING_POLL_INTERVAL: ${POLLING_INTERVAL:-60}
+      POLLING_AREAS: ${POLLING_AREAS:-DE,FR,NL}
+
+      # Webhook source
+      WEBHOOK_ENABLED: ${WEBHOOK_ENABLED:-false}
+      WEBHOOK_NAME: webhook
+      WEBHOOK_HOST: 0.0.0.0
+      WEBHOOK_PORT: 8080
+      WEBHOOK_PATH: /webhook/trades
+
+      # Micro-batch settings
+      MICROBATCH_ENABLED: ${MICROBATCH_ENABLED:-false}
+      MICROBATCH_NAME: micro_batch
+      MICROBATCH_WINDOW_SECONDS: ${MICROBATCH_WINDOW:-10}
+      MICROBATCH_MAX_BATCH_SIZE: ${MICROBATCH_SIZE:-1000}
+
+      # Batch file processing
+      BATCH_ENABLED: ${BATCH_ENABLED:-false}
+      BATCH_NAME: batch
+      BATCH_DIRECTORY: /data/imports
+      BATCH_FILE_PATTERN: "*.csv"
+
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    volumes:
+      - ./data/imports:/data/imports:ro
     restart: unless-stopped
     networks:
       - trading-network
@@ -140,6 +208,8 @@ services:
       - trading-network
 
 volumes:
+  kafka_data:
+    driver: local
   postgres_data:
     driver: local
 

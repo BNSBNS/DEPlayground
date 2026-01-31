@@ -1,19 +1,148 @@
 # Energy Trading Platform
 
-A production-grade real-time analytics platform for energy trading, featuring Kafka streaming, windowed aggregations, and PostgreSQL storage.
+A production-grade real-time analytics platform for energy trading, featuring Kafka streaming, windowed aggregations, and PostgreSQL storage with **multi-source data ingestion**.
 
-## Architecture Overview
+---
+
+## C4 Architecture Overview
+
+### Level 1: System Context
 
 ```
-┌──────────────┐     ┌─────────────┐     ┌──────────────────┐     ┌─────────────┐
-│    Trade     │────▶│    Kafka    │────▶│    Streaming     │────▶│ PostgreSQL  │
-│   Producer   │     │   Cluster   │     │    Consumer      │     │   (OLTP)    │
-│              │     │             │     │                  │     │             │
-│ • Generates  │     │ • trades    │     │ • 1-min windows  │     │ • Aggregates│
-│   trade      │     │   topic     │     │ • VWAP calc      │     │ • Queries   │
-│   events     │     │ • DLQ topic │     │ • DLQ handling   │     │ • Indexes   │
-└──────────────┘     └─────────────┘     └──────────────────┘     └─────────────┘
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                           EXTERNAL DATA SOURCES                                  │
+├─────────────────────────────────────────────────────────────────────────────────┤
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────────┐ │
+│  │  Finnhub    │  │ DexPaprika  │  │   ENTSO-E   │  │     CSV/Parquet Files   │ │
+│  │  (Stocks)   │  │  (Crypto)   │  │  (Energy)   │  │   (Historical Data)     │ │
+│  │  WebSocket  │  │     SSE     │  │   Polling   │  │        Batch            │ │
+│  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘  └───────────┬─────────────┘ │
+└─────────┼────────────────┼────────────────┼──────────────────────┼───────────────┘
+          │                │                │                      │
+          └────────────────┴────────┬───────┴──────────────────────┘
+                                    ▼
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                        ENERGY TRADING PLATFORM                                   │
+│  ┌───────────────────────────────────────────────────────────────────────────┐  │
+│  │  INGESTION LAYER: Connectors (WS/SSE/Polling/Batch) + Adapters + Metrics  │  │
+│  └───────────────────────────────────────────────────────────────────────────┘  │
+│                                    │                                             │
+│                                    ▼                                             │
+│  ┌───────────────────────────────────────────────────────────────────────────┐  │
+│  │  KAFKA (KRaft): trades | trades-raw | trades-dlq | 6 partitions           │  │
+│  └───────────────────────────────────────────────────────────────────────────┘  │
+│                                    │                                             │
+│                                    ▼                                             │
+│  ┌───────────────────────────────────────────────────────────────────────────┐  │
+│  │  STREAM PROCESSING: 1-min windows | VWAP | Late events | Idempotent       │  │
+│  └───────────────────────────────────────────────────────────────────────────┘  │
+│                                    │                                             │
+│                                    ▼                                             │
+│  ┌───────────────────────────────────────────────────────────────────────────┐  │
+│  │  TIMESCALEDB: trade_aggregates | BRIN indexes | Compression | Hypertables │  │
+│  └───────────────────────────────────────────────────────────────────────────┘  │
+│                                    │                                             │
+│                                    ▼                                             │
+│  ┌───────────────────────────────────────────────────────────────────────────┐  │
+│  │  SERVING: REST API | Superset | Grafana | Chat (Ollama)                    │  │
+│  └───────────────────────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────────────────────┘
 ```
+
+### Level 2: Ingestion Modes (4 Profiles)
+
+The platform supports **4 ingestion profiles** via Docker Compose `--profile`:
+
+| Profile | Command | Data Sources | Use Case |
+|---------|---------|--------------|----------|
+| **LOCAL** | `--profile local` | Synthetic Producer (10 TPS) | Development, demos |
+| **REALTIME** | `--profile realtime` | Finnhub (WS), DexPaprika (SSE) | Live market data |
+| **BATCH** | `--profile batch` | CSV/Parquet files | Historical import |
+| **HYBRID** | `--profile hybrid` | APIs + Files combined | Production |
+
+#### LOCAL Mode Flow
+```
+┌──────────────┐         ┌─────────┐         ┌──────────┐         ┌────────────┐
+│   Producer   │────────▶│  Kafka  │────────▶│ Consumer │────────▶│ TimescaleDB│
+│  (Synthetic) │  trades │ (KRaft) │  trades │ (VWAP)   │  upsert │ aggregates │
+│  10 TPS      │         │ 6 parts │         │ 1-min    │         │            │
+└──────────────┘         └─────────┘         └──────────┘         └────────────┘
+```
+
+#### REALTIME Mode Flow
+```
+┌────────────┐
+│  Finnhub   │──┐
+│ (WebSocket)│  │    ┌───────────┐         ┌─────────┐         ┌──────────┐
+│ AAPL,GOOGL │  ├───▶│ Ingestion │────────▶│  Kafka  │────────▶│ Consumer │──▶ DB
+└────────────┘  │    │  Service  │  trades │ (KRaft) │  trades │ (VWAP)   │
+┌────────────┐  │    │           │         │         │         │          │
+│ DexPaprika │──┤    │ Adapters  │         │         │         │          │
+│   (SSE)    │  │    │ Metrics   │         │         │         │          │
+│ BTC,ETH    │  │    └───────────┘         └─────────┘         └──────────┘
+└────────────┘  │
+┌────────────┐  │
+│  ENTSO-E   │──┘
+│ (Polling)  │
+└────────────┘
+```
+
+#### BATCH Mode Flow
+```
+┌────────────────┐    ┌───────────┐         ┌─────────┐         ┌──────────┐
+│  /data/imports │───▶│ Ingestion │────────▶│  Kafka  │────────▶│ Consumer │──▶ DB
+│  *.csv         │    │  Service  │  trades │ (KRaft) │  trades │ (VWAP)   │
+│  *.parquet     │    │  Batch    │         │         │         │          │
+│  *.json        │    │  Reader   │         │         │         │          │
+└────────────────┘    └───────────┘         └─────────┘         └──────────┘
+```
+
+### Level 3: Ingestion Service Components
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                     INGESTION SERVICE (Hexagonal Architecture)               │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  PRIMARY PORTS (Connectors)                                                  │
+│  ┌───────────┐ ┌───────────┐ ┌───────────┐ ┌───────────┐ ┌───────────┐     │
+│  │ WebSocket │ │    SSE    │ │  Polling  │ │  Webhook  │ │   Batch   │     │
+│  │ Connector │ │ Connector │ │ Connector │ │ Connector │ │ Connector │     │
+│  └─────┬─────┘ └─────┬─────┘ └─────┬─────┘ └─────┬─────┘ └─────┬─────┘     │
+│        └─────────────┴──────┬──────┴─────────────┴─────────────┘           │
+│                             ▼                                               │
+│  ┌───────────────────────────────────────────────────────────────────────┐ │
+│  │  PROCESSING PIPELINE (Chain of Responsibility)                         │ │
+│  │  [Validate] ──▶ [Deduplicate] ──▶ [Enrich] ──▶ [Transform via Adapter] │ │
+│  └───────────────────────────────────────────────────────────────────────┘ │
+│                             │                                               │
+│  SECONDARY PORTS            ▼                                               │
+│  ┌──────────────┐  ┌───────────────┐  ┌─────────────┐                      │
+│  │ KafkaPublish │  │ DLQ Publisher │  │ Prometheus  │                      │
+│  │   (trades)   │  │ (trades-dlq)  │  │  (:8003)    │                      │
+│  └──────────────┘  └───────────────┘  └─────────────┘                      │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  ADAPTERS (External API → TradeEvent)                                       │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐                         │
+│  │  Finnhub    │  │ DexPaprika  │  │   ENTSO-E   │                         │
+│  │  Adapter    │  │   Adapter   │  │   Adapter   │                         │
+│  └─────────────┘  └─────────────┘  └─────────────┘                         │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  RESILIENCE: Circuit Breaker | Rate Limiter | Retry | Backpressure          │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Data Flow Summary
+
+| Profile | Source | Connector | Kafka Topic | Consumer | Database |
+|---------|--------|-----------|-------------|----------|----------|
+| LOCAL | Producer (synthetic) | N/A | `trades` | Aggregator | `trade_aggregates` |
+| REALTIME | Finnhub, DexPaprika | WS, SSE | `trades` | Aggregator | `trade_aggregates` |
+| BATCH | CSV/Parquet files | Batch | `trades` | Aggregator | `trade_aggregates` |
+| HYBRID | APIs + Files | WS, SSE, Batch | `trades` | Aggregator | `trade_aggregates` |
+
+---
 
 ## Features
 
@@ -34,51 +163,111 @@ A production-grade real-time analytics platform for energy trading, featuring Ka
 
 ---
 
-### Option 1: Run Everything with Docker (Easiest)
+### Option 1: Run with Docker (4 Ingestion Profiles)
 
-This starts the entire stack including producer, consumer, Kafka, and PostgreSQL:
+The platform supports **4 ingestion profiles**. Choose based on your data source needs:
+
+#### Profile 1: LOCAL (Synthetic Data - Best for Development)
 
 ```bash
-# Start the full stack
-docker-compose up -d
+# Start with synthetic trade producer (10 trades/sec)
+docker-compose -f docker-compose-full.yml --profile local up -d
 
-# Verify all services are running
-docker-compose ps
+# Data flow: Producer → Kafka → Consumer → TimescaleDB
+# - Producer generates random AAPL, GOOGL, MSFT, AMZN trades
+# - Consumer aggregates into 1-minute VWAP windows
+# - Results stored in trade_aggregates table
 
-# Watch the logs (producer generating trades, consumer aggregating)
-docker-compose logs -f producer consumer
+# Watch data flowing
+docker-compose -f docker-compose-full.yml logs -f producer consumer
 
-# Query aggregates in the database
-docker-compose exec postgres psql -U trading -d trades -c \
+# Verify aggregates in database
+docker exec timescaledb psql -U trading -d trades -c \
   "SELECT symbol, window_start, vwap, trade_count FROM trade_aggregates ORDER BY window_start DESC LIMIT 10;"
+
+# Stop (IMPORTANT: use same profile!)
+docker-compose -f docker-compose-full.yml --profile local down
 ```
 
-**Stop everything:**
+#### Profile 2: REALTIME (Live API Data)
+
 ```bash
-docker-compose down          # Stop and remove containers
-docker-compose down -v       # Also remove data volumes (fresh start)
+# Start with real-time API sources
+docker-compose -f docker-compose-full.yml --profile realtime up -d
+
+# Data flow: Finnhub(WS) + DexPaprika(SSE) → Ingestion → Kafka → Consumer → DB
+# - Finnhub: Real-time stock trades (AAPL, GOOGL, MSFT, AMZN, BTC)
+# - DexPaprika: Real-time crypto prices (BTC, ETH, SOL)
+# - Requires API keys in .env file (FINNHUB_API_KEY)
+
+# Watch ingestion metrics
+curl http://localhost:8003/metrics
+
+# Stop
+docker-compose -f docker-compose-full.yml --profile realtime down
 ```
 
-**Full Stack with Analytics & Monitoring:**
-
-For a complete environment including TimescaleDB, Superset, Kafka UI, Prometheus, Grafana, and the chat interface:
+#### Profile 3: BATCH (Historical File Import)
 
 ```bash
-# Start the full analytics stack
-docker-compose -f docker-compose-full.yml up -d
+# Place CSV/Parquet files in ./data/imports/ before starting
+# Expected columns: symbol, price, volume, timestamp
 
-# Services available:
-# - API:        http://localhost:8000/docs
-# - Chat UI:    http://localhost:7860
-# - Kafka UI:   http://localhost:8080
-# - Superset:   http://localhost:8088
-# - Grafana:    http://localhost:3000
-# - Prometheus: http://localhost:9090
+# Start batch processor
+docker-compose -f docker-compose-full.yml --profile batch up -d
 
-# Initialize Superset (first time only)
+# Data flow: CSV/Parquet files → Ingestion → Kafka → Consumer → DB
+# - Monitors /data/imports for new files
+# - Processes *.csv, *.parquet, *.json files
+# - Moves processed files to archive
+
+# Stop
+docker-compose -f docker-compose-full.yml --profile batch down
+```
+
+#### Profile 4: HYBRID (Real-time + Batch Combined)
+
+```bash
+# Start both API and file ingestion
+docker-compose -f docker-compose-full.yml --profile hybrid up -d
+
+# Data flow: APIs + Files → Ingestion → Kafka → Consumer → DB
+# - Combines real-time and batch sources
+# - Best for production: backfill historical + stream live
+
+# Stop
+docker-compose -f docker-compose-full.yml --profile hybrid down
+```
+
+#### Common Services (All Profiles)
+
+All profiles include these services:
+
+| Service | URL | Description |
+|---------|-----|-------------|
+| API | http://localhost:8000/docs | REST API with Swagger docs |
+| Kafka UI | http://localhost:8080 | Kafka topic browser |
+| Grafana | http://localhost:3000 | Dashboards (admin/admin) |
+| Prometheus | http://localhost:9090 | Metrics |
+| Superset | http://localhost:8088 | SQL analytics |
+| Chat | http://localhost:7860 | Natural language queries |
+
+#### Initialize Superset (First Time Only)
+
+```bash
 docker exec superset superset db upgrade
-docker exec superset superset fab create-admin --username admin --firstname Admin --lastname User --email admin@local --password admin
+docker exec superset superset fab create-admin \
+  --username admin --firstname Admin --lastname User \
+  --email admin@local --password admin
 docker exec superset superset init
+```
+
+#### Clean Up (Remove All Data)
+
+```bash
+# Stop with volume removal (fresh start)
+docker-compose -f docker-compose-full.yml --profile local down -v
+# Or whichever profile you used
 ```
 
 ---

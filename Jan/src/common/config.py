@@ -4,11 +4,28 @@ This module provides centralized configuration with validation for all services.
 Configuration is loaded from environment variables following 12-factor app principles.
 """
 
+from enum import Enum
 from functools import lru_cache
 from typing import Literal
 
 from pydantic import Field, PostgresDsn, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class IngestionMode(str, Enum):
+    """Ingestion mode determines which data sources are active.
+
+    Modes:
+        LOCAL: Use synthetic producer (Docker) - no external APIs
+        REALTIME: Use real-time APIs (WebSocket, SSE, Polling)
+        BATCH: Use batch file processing (CSV, Parquet)
+        HYBRID: Combine real-time APIs and batch processing
+    """
+
+    LOCAL = "local"
+    REALTIME = "realtime"
+    BATCH = "batch"
+    HYBRID = "hybrid"
 
 
 class KafkaSettings(BaseSettings):
@@ -177,11 +194,467 @@ class APISettings(BaseSettings):
 
     @field_validator("cors_origins", mode="before")
     @classmethod
-    def parse_cors_origins(cls, v: str | list[str]) -> list[str]:
-        """Parse CORS origins from comma-separated string or list."""
+    def parse_cors_origins(cls, v) -> list[str]:
+        """Parse CORS origins from comma-separated string, JSON, or list."""
+        if v is None:
+            return ["http://localhost:3000", "http://localhost:8080"]
+        if isinstance(v, list):
+            return v
         if isinstance(v, str):
+            v = v.strip()
+            if v.startswith("["):
+                import json
+                try:
+                    return json.loads(v)
+                except json.JSONDecodeError:
+                    pass
             return [origin.strip() for origin in v.split(",") if origin.strip()]
-        return v
+        return list(v)
+
+
+class SourceSettings(BaseSettings):
+    """Base settings for data source connectors."""
+
+    model_config = SettingsConfigDict(extra="ignore")
+
+    enabled: bool = Field(default=False, description="Whether this source is enabled")
+    name: str = Field(description="Unique name for this source")
+    source_type: str = Field(description="Type of connector (websocket, sse, polling, etc.)")
+
+    # Resilience settings
+    max_retries: int = Field(default=3, ge=0, le=10)
+    retry_delay: float = Field(default=1.0, ge=0.1, le=60.0)
+    circuit_breaker_enabled: bool = Field(default=True)
+    circuit_breaker_threshold: int = Field(default=5, ge=1, le=50)
+    circuit_breaker_timeout: int = Field(default=30, ge=5, le=300)
+
+    def to_connector_config(self) -> dict:
+        """Convert to connector configuration dict."""
+        return {
+            "name": self.name,
+        }
+
+
+class WebSocketSourceSettings(SourceSettings):
+    """WebSocket source configuration (e.g., Finnhub)."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="WS_",
+        extra="ignore",
+    )
+
+    source_type: str = Field(default="websocket")
+    url: str = Field(
+        default="wss://ws.finnhub.io",
+        description="WebSocket endpoint URL",
+    )
+    api_key: str = Field(
+        default="",
+        description="API key for authentication",
+    )
+    symbols: list[str] = Field(
+        default=["AAPL", "GOOGL", "MSFT", "AMZN", "BINANCE:BTCUSDT"],
+        description="Symbols to subscribe to",
+    )
+    ping_interval: int = Field(
+        default=30,
+        ge=10,
+        le=120,
+        description="Ping interval in seconds",
+    )
+    reconnect_delay: float = Field(
+        default=5.0,
+        ge=1.0,
+        le=60.0,
+        description="Delay before reconnection attempt",
+    )
+
+    @field_validator("symbols", mode="before")
+    @classmethod
+    def parse_symbols(cls, v) -> list[str]:
+        """Parse symbols from comma-separated string, JSON, or list."""
+        if v is None:
+            return ["AAPL", "GOOGL", "MSFT", "AMZN", "BINANCE:BTCUSDT"]
+        if isinstance(v, list):
+            return v
+        if isinstance(v, str):
+            # Try JSON parsing first (pydantic-settings may send JSON)
+            v = v.strip()
+            if v.startswith("["):
+                import json
+                try:
+                    return json.loads(v)
+                except json.JSONDecodeError:
+                    pass
+            # Fallback to comma-separated
+            return [s.strip() for s in v.split(",") if s.strip()]
+        return list(v)
+
+    def to_connector_config(self) -> dict:
+        """Convert to connector configuration dict."""
+        return {
+            "name": self.name,
+            "url": self.url,
+            "api_key": self.api_key,
+            "symbols": self.symbols,
+            "ping_interval": self.ping_interval,
+            "reconnect_delay": self.reconnect_delay,
+        }
+
+
+class SSESourceSettings(SourceSettings):
+    """SSE source configuration (e.g., DexPaprika)."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="SSE_",
+        extra="ignore",
+    )
+
+    source_type: str = Field(default="sse")
+    url: str = Field(
+        default="https://api.dexpaprika.com/sse/prices",
+        description="SSE endpoint URL",
+    )
+    symbols: list[str] = Field(
+        default=["BTC", "ETH", "SOL"],
+        description="Crypto symbols to subscribe to",
+    )
+    timeout: int = Field(
+        default=300,
+        ge=30,
+        le=3600,
+        description="Connection timeout in seconds",
+    )
+
+    @field_validator("symbols", mode="before")
+    @classmethod
+    def parse_symbols(cls, v) -> list[str]:
+        """Parse symbols from comma-separated string, JSON, or list."""
+        if v is None:
+            return ["BTC", "ETH", "SOL"]
+        if isinstance(v, list):
+            return v
+        if isinstance(v, str):
+            # Try JSON parsing first (pydantic-settings may send JSON)
+            v = v.strip()
+            if v.startswith("["):
+                import json
+                try:
+                    return json.loads(v)
+                except json.JSONDecodeError:
+                    pass
+            # Fallback to comma-separated
+            return [s.strip() for s in v.split(",") if s.strip()]
+        return list(v)
+
+    def to_connector_config(self) -> dict:
+        """Convert to connector configuration dict."""
+        return {
+            "name": self.name,
+            "url": self.url,
+            "symbols": self.symbols,
+            "timeout": self.timeout,
+        }
+
+
+class PollingSourceSettings(SourceSettings):
+    """Polling source configuration (e.g., ENTSO-E)."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="POLLING_",
+        extra="ignore",
+    )
+
+    source_type: str = Field(default="polling")
+    url: str = Field(
+        default="https://web-api.tp.entsoe.eu/api",
+        description="REST API endpoint URL",
+    )
+    api_key: str = Field(
+        default="",
+        description="API key for authentication",
+    )
+    poll_interval: int = Field(
+        default=60,
+        ge=10,
+        le=3600,
+        description="Polling interval in seconds",
+    )
+    areas: list[str] = Field(
+        default=["DE", "FR", "NL"],
+        description="Energy market areas to poll",
+    )
+
+    @field_validator("areas", mode="before")
+    @classmethod
+    def parse_areas(cls, v) -> list[str]:
+        """Parse areas from comma-separated string, JSON, or list."""
+        if v is None:
+            return ["DE", "FR", "NL"]
+        if isinstance(v, list):
+            return v
+        if isinstance(v, str):
+            # Try JSON parsing first (pydantic-settings may send JSON)
+            v = v.strip()
+            if v.startswith("["):
+                import json
+                try:
+                    return json.loads(v)
+                except json.JSONDecodeError:
+                    pass
+            # Fallback to comma-separated
+            return [a.strip() for a in v.split(",") if a.strip()]
+        return list(v)
+
+    def to_connector_config(self) -> dict:
+        """Convert to connector configuration dict."""
+        return {
+            "name": self.name,
+            "url": self.url,
+            "api_key": self.api_key,
+            "poll_interval": self.poll_interval,
+            "areas": self.areas,
+        }
+
+
+class WebhookSourceSettings(SourceSettings):
+    """Webhook source configuration."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="WEBHOOK_",
+        extra="ignore",
+    )
+
+    source_type: str = Field(default="webhook")
+    host: str = Field(
+        default="0.0.0.0",
+        description="Host to bind webhook server",
+    )
+    port: int = Field(
+        default=8080,
+        ge=1024,
+        le=65535,
+        description="Port for webhook server",
+    )
+    path: str = Field(
+        default="/webhook/trades",
+        description="URL path for webhook endpoint",
+    )
+    secret: str = Field(
+        default="",
+        description="Shared secret for webhook validation",
+    )
+
+    def to_connector_config(self) -> dict:
+        """Convert to connector configuration dict."""
+        return {
+            "name": self.name,
+            "host": self.host,
+            "port": self.port,
+            "path": self.path,
+            "secret": self.secret,
+        }
+
+
+class MicroBatchSourceSettings(SourceSettings):
+    """Micro-batch source configuration."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="MICROBATCH_",
+        extra="ignore",
+    )
+
+    source_type: str = Field(default="micro_batch")
+    window_seconds: int = Field(
+        default=10,
+        ge=1,
+        le=300,
+        description="Window duration for micro-batching",
+    )
+    max_batch_size: int = Field(
+        default=1000,
+        ge=10,
+        le=100000,
+        description="Maximum events per batch",
+    )
+
+    def to_connector_config(self) -> dict:
+        """Convert to connector configuration dict."""
+        return {
+            "name": self.name,
+            "window_seconds": self.window_seconds,
+            "max_batch_size": self.max_batch_size,
+        }
+
+
+class BatchSourceSettings(SourceSettings):
+    """Batch file source configuration."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="BATCH_",
+        extra="ignore",
+    )
+
+    source_type: str = Field(default="batch")
+    directory: str = Field(
+        default="/data/imports",
+        description="Directory to watch for batch files",
+    )
+    file_pattern: str = Field(
+        default="*.csv",
+        description="Glob pattern for matching files",
+    )
+    poll_interval: int = Field(
+        default=60,
+        ge=10,
+        le=3600,
+        description="Interval for checking new files",
+    )
+    archive_directory: str | None = Field(
+        default=None,
+        description="Directory to move processed files",
+    )
+    checkpoint_file: str = Field(
+        default="/data/.batch_checkpoint",
+        description="File for tracking processed files",
+    )
+
+    def to_connector_config(self) -> dict:
+        """Convert to connector configuration dict."""
+        return {
+            "name": self.name,
+            "input_path": self.directory,
+            "file_pattern": self.file_pattern,
+            "poll_interval": self.poll_interval,
+            "archive_path": self.archive_directory,
+            "checkpoint_file": self.checkpoint_file,
+        }
+
+
+class IngestionSettings(BaseSettings):
+    """Ingestion service configuration.
+
+    Aggregates all data source configurations and ingestion-specific settings.
+
+    Modes:
+        - LOCAL: No ingestion service needed (use synthetic producer)
+        - REALTIME: WebSocket (Finnhub), SSE (DexPaprika), Polling (ENTSO-E)
+        - BATCH: CSV/Parquet file processing
+        - HYBRID: Both real-time and batch sources
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="INGESTION_",
+        extra="ignore",
+    )
+
+    # Ingestion mode
+    mode: IngestionMode = Field(
+        default=IngestionMode.LOCAL,
+        description="Ingestion mode: local, realtime, batch, or hybrid",
+    )
+
+    # Metrics server
+    metrics_port: int = Field(
+        default=8003,
+        ge=1024,
+        le=65535,
+        description="Port for Prometheus metrics endpoint",
+    )
+    metrics_enabled: bool = Field(
+        default=True,
+        description="Enable Prometheus metrics collection",
+    )
+
+    # DLQ settings
+    dlq_enabled: bool = Field(
+        default=True,
+        description="Enable dead letter queue for failed events",
+    )
+
+    # Pipeline settings
+    dedup_cache_size: int = Field(
+        default=50000,
+        ge=1000,
+        le=1000000,
+        description="Size of deduplication cache",
+    )
+    validation_strict: bool = Field(
+        default=True,
+        description="Enable strict validation mode",
+    )
+
+    @property
+    def websocket(self) -> WebSocketSourceSettings:
+        """Get WebSocket source settings (loaded from WS_* env vars)."""
+        return WebSocketSourceSettings(name="finnhub")
+
+    @property
+    def sse(self) -> SSESourceSettings:
+        """Get SSE source settings (loaded from SSE_* env vars)."""
+        return SSESourceSettings(name="dexpaprika")
+
+    @property
+    def polling(self) -> PollingSourceSettings:
+        """Get Polling source settings (loaded from POLLING_* env vars)."""
+        return PollingSourceSettings(name="entsoe")
+
+    @property
+    def webhook(self) -> WebhookSourceSettings:
+        """Get Webhook source settings (loaded from WEBHOOK_* env vars)."""
+        return WebhookSourceSettings(name="webhook")
+
+    @property
+    def micro_batch(self) -> MicroBatchSourceSettings:
+        """Get Micro-batch source settings (loaded from MICROBATCH_* env vars)."""
+        return MicroBatchSourceSettings(name="micro_batch")
+
+    @property
+    def batch(self) -> BatchSourceSettings:
+        """Get Batch source settings (loaded from BATCH_* env vars)."""
+        return BatchSourceSettings(name="batch")
+
+    def get_enabled_sources(self) -> list[SourceSettings]:
+        """Get list of enabled source configurations based on mode.
+
+        Returns sources appropriate for the current ingestion mode:
+        - LOCAL: Empty list (use synthetic producer instead)
+        - REALTIME: WebSocket, SSE, Polling (if individually enabled)
+        - BATCH: Batch file processor (if enabled)
+        - HYBRID: All real-time + batch sources (if individually enabled)
+        """
+        if self.mode == IngestionMode.LOCAL:
+            # Local mode uses synthetic producer, not ingestion service
+            return []
+
+        sources: list[SourceSettings] = []
+
+        # Real-time sources (REALTIME or HYBRID mode)
+        if self.mode in (IngestionMode.REALTIME, IngestionMode.HYBRID):
+            if self.websocket.enabled:
+                sources.append(self.websocket)
+            if self.sse.enabled:
+                sources.append(self.sse)
+            if self.polling.enabled:
+                sources.append(self.polling)
+            if self.webhook.enabled:
+                sources.append(self.webhook)
+
+        # Batch sources (BATCH or HYBRID mode)
+        if self.mode in (IngestionMode.BATCH, IngestionMode.HYBRID):
+            if self.micro_batch.enabled:
+                sources.append(self.micro_batch)
+            if self.batch.enabled:
+                sources.append(self.batch)
+
+        return sources
+
+    def is_ingestion_needed(self) -> bool:
+        """Check if ingestion service should run.
+
+        Returns False for LOCAL mode (uses synthetic producer).
+        """
+        return self.mode != IngestionMode.LOCAL
 
 
 class Settings(BaseSettings):
@@ -202,6 +675,7 @@ class Settings(BaseSettings):
     producer: ProducerSettings = Field(default_factory=ProducerSettings)
     consumer: ConsumerSettings = Field(default_factory=ConsumerSettings)
     api: APISettings = Field(default_factory=APISettings)
+    ingestion: IngestionSettings = Field(default_factory=IngestionSettings)
 
     # Application-wide settings
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = Field(

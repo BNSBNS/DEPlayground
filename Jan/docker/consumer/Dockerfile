@@ -47,6 +47,7 @@ RUN groupadd --gid 1000 trading && \
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq5 \
     curl \
+    procps \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean
 

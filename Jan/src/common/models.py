@@ -20,6 +20,28 @@ class TradeSide(str, Enum):
     SELL = "SELL"
 
 
+class SourceType(str, Enum):
+    """Data source type classification for ingestion.
+
+    Each type has different latency characteristics:
+    - WEBSOCKET: Real-time bidirectional (~20-170ms)
+    - SSE: Server-sent events (~100-500ms)
+    - POLLING: Periodic REST calls (configurable interval)
+    - WEBHOOK: Push notifications (event-driven)
+    - MICRO_BATCH: Windowed batches (5-30s)
+    - BATCH: Historical/bulk imports (hourly/daily)
+    - SYNTHETIC: Internal generator (for testing)
+    """
+
+    WEBSOCKET = "websocket"
+    SSE = "sse"
+    POLLING = "polling"
+    WEBHOOK = "webhook"
+    MICRO_BATCH = "micro_batch"
+    BATCH = "batch"
+    SYNTHETIC = "synthetic"
+
+
 # Type aliases for trading precision
 # NUMERIC(18,8) in PostgreSQL - supports up to 10 digits before decimal, 8 after
 Price = Annotated[Decimal, Field(ge=Decimal("0"), decimal_places=8)]

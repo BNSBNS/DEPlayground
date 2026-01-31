@@ -27,3 +27,10 @@ scrape_configs:
     static_configs:
       - targets: ["producer:8002"]
     metrics_path: /metrics
+
+  # Trade Ingestion metrics (multi-source ingestion)
+  # Uses container_name which is the same for all ingestion profiles
+  - job_name: "trade-ingestion"
+    static_configs:
+      - targets: ["trade-ingestion:8003"]
+    metrics_path: /metrics

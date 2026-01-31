@@ -1,55 +1,76 @@
 version: "3.8"
 
 # Full E2E streaming stack for local development and testing
-# Includes: Kafka, TimescaleDB, Producer, Consumer, API, Superset, Monitoring
+# Includes: Kafka (KRaft), TimescaleDB, Producer, Ingestion, Consumer, API, Superset, Monitoring
+#
+# INGESTION MODES:
+#   docker compose -f docker-compose-full.yml --profile local up      # Synthetic data (default)
+#   docker compose -f docker-compose-full.yml --profile realtime up   # Real-time APIs
+#   docker compose -f docker-compose-full.yml --profile batch up      # Batch file processing
+#   docker compose -f docker-compose-full.yml --profile hybrid up     # Real-time + Batch
 
 x-common-env: &common-env
   KAFKA_BOOTSTRAP_SERVERS: kafka:29092
   POSTGRES_DSN: postgresql://trading:trading@timescaledb:5432/trades
   LOG_LEVEL: INFO
 
+x-ingestion-base: &ingestion-base
+  build:
+    context: .
+    dockerfile: docker/ingestion/Dockerfile
+  ports:
+    - "8003:8003"
+  volumes:
+    - ./data/imports:/data/imports:ro
+  depends_on:
+    kafka:
+      condition: service_healthy
+    kafka-init:
+      condition: service_completed_successfully
+  restart: unless-stopped
+
 services:
   # ============================================
-  # INFRASTRUCTURE
+  # INFRASTRUCTURE - Kafka in KRaft Mode (No Zookeeper)
   # ============================================
-
-  zookeeper:
-    image: confluentinc/cp-zookeeper:7.5.0
-    container_name: zookeeper
-    environment:
-      ZOOKEEPER_CLIENT_PORT: 2181
-      ZOOKEEPER_TICK_TIME: 2000
-    ports:
-      - "2181:2181"
-    healthcheck:
-      test: ["CMD", "nc", "-z", "localhost", "2181"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    volumes:
-      - zookeeper_data:/var/lib/zookeeper/data
-      - zookeeper_logs:/var/lib/zookeeper/log
 
   kafka:
     image: confluentinc/cp-kafka:7.5.0
     container_name: kafka
-    depends_on:
-      zookeeper:
-        condition: service_healthy
     ports:
       - "9092:9092"
       - "29092:29092"
+      - "9093:9093"
     environment:
-      KAFKA_BROKER_ID: 1
-      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      # KRaft mode settings
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+
+      # Listener configuration
+      KAFKA_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://0.0.0.0:9092,CONTROLLER://kafka:9093
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+
+      # Topic settings
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
       KAFKA_NUM_PARTITIONS: 6
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 1
+      KAFKA_MIN_INSYNC_REPLICAS: 1
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+
+      # Log settings
+      KAFKA_LOG_RETENTION_HOURS: 168
+      KAFKA_LOG_RETENTION_BYTES: 1073741824
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+
+      # KRaft cluster ID (must be consistent across restarts)
+      CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
     healthcheck:
       test: ["CMD", "kafka-topics", "--bootstrap-server", "localhost:9092", "--list"]
       interval: 10s
@@ -57,6 +78,23 @@ services:
       retries: 10
     volumes:
       - kafka_data:/var/lib/kafka/data
+
+  kafka-init:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: kafka-init
+    depends_on:
+      kafka:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command: |
+      "
+      echo 'Creating Kafka topics...'
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic trades --partitions 6 --replication-factor 1
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic trades-raw --partitions 6 --replication-factor 1
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic trades-dlq --partitions 3 --replication-factor 1
+      echo 'Topics created successfully:'
+      kafka-topics --bootstrap-server kafka:29092 --list
+      "
 
   kafka-ui:
     image: provectuslabs/kafka-ui:latest
@@ -69,7 +107,6 @@ services:
     environment:
       KAFKA_CLUSTERS_0_NAME: local
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
-      KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper:2181
 
   # ============================================
   # DATABASE (TimescaleDB)
@@ -96,16 +133,18 @@ services:
       retries: 5
 
   # ============================================
-  # APPLICATIONS
+  # APPLICATIONS - DATA PRODUCERS
   # ============================================
 
+  # LOCAL MODE: Synthetic trade producer (default)
   producer:
+    profiles: ["local"]
     build:
       context: .
       dockerfile: docker/producer/Dockerfile
     container_name: trade-producer
     ports:
-      - "8002:8002"  # Prometheus metrics
+      - "8002:8002"
     environment:
       <<: *common-env
       PRODUCER_RATE: ${PRODUCER_RATE:-10}
@@ -113,7 +152,114 @@ services:
     depends_on:
       kafka:
         condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
     restart: unless-stopped
+
+  # REALTIME MODE: Real-time API ingestion (WebSocket, SSE, Polling)
+  ingestion-realtime:
+    <<: *ingestion-base
+    container_name: trade-ingestion
+    profiles: ["realtime"]
+    environment:
+      <<: *common-env
+      KAFKA_TOPIC: trades
+      KAFKA_DLQ_TOPIC: trades-dlq
+      INGESTION_MODE: realtime
+      INGESTION_METRICS_PORT: 8003
+      INGESTION_METRICS_ENABLED: "true"
+      INGESTION_DLQ_ENABLED: "true"
+
+      # WebSocket source (Finnhub) - Stock/Crypto trades
+      WS_ENABLED: ${WS_ENABLED:-true}
+      WS_NAME: finnhub
+      WS_URL: wss://ws.finnhub.io
+      WS_API_KEY: ${FINNHUB_API_KEY:-demo}
+      WS_SYMBOLS: '["AAPL","GOOGL","MSFT","AMZN","BINANCE:BTCUSDT"]'
+
+      # SSE source (DexPaprika) - Crypto prices
+      SSE_ENABLED: ${SSE_ENABLED:-true}
+      SSE_NAME: dexpaprika
+      SSE_URL: https://api.dexpaprika.com/sse/prices
+      SSE_SYMBOLS: '["BTC","ETH","SOL"]'
+
+      # Polling source (ENTSO-E) - Energy prices
+      POLLING_ENABLED: ${POLLING_ENABLED:-false}
+      POLLING_NAME: entsoe
+      POLLING_URL: https://web-api.tp.entsoe.eu/api
+      POLLING_API_KEY: ${ENTSOE_API_KEY:-}
+      POLLING_POLL_INTERVAL: ${POLLING_INTERVAL:-60}
+      POLLING_AREAS: '["DE","FR","NL"]'
+
+  # BATCH MODE: Batch file processing
+  ingestion-batch:
+    <<: *ingestion-base
+    container_name: trade-ingestion
+    profiles: ["batch"]
+    environment:
+      <<: *common-env
+      KAFKA_TOPIC: trades
+      KAFKA_DLQ_TOPIC: trades-dlq
+      INGESTION_MODE: batch
+      INGESTION_METRICS_PORT: 8003
+      INGESTION_METRICS_ENABLED: "true"
+      INGESTION_DLQ_ENABLED: "true"
+
+      # Batch file processing
+      BATCH_ENABLED: "true"
+      BATCH_NAME: batch
+      BATCH_DIRECTORY: /data/imports
+      BATCH_FILE_PATTERN: ${BATCH_PATTERN:-*.csv}
+      BATCH_POLL_INTERVAL: ${BATCH_POLL_INTERVAL:-60}
+
+      # Micro-batch (for streaming batch windows)
+      MICROBATCH_ENABLED: ${MICROBATCH_ENABLED:-false}
+      MICROBATCH_NAME: micro_batch
+      MICROBATCH_WINDOW_SECONDS: ${MICROBATCH_WINDOW:-10}
+      MICROBATCH_MAX_BATCH_SIZE: ${MICROBATCH_SIZE:-1000}
+
+  # HYBRID MODE: Real-time + Batch
+  ingestion-hybrid:
+    <<: *ingestion-base
+    container_name: trade-ingestion
+    profiles: ["hybrid"]
+    environment:
+      <<: *common-env
+      KAFKA_TOPIC: trades
+      KAFKA_DLQ_TOPIC: trades-dlq
+      INGESTION_MODE: hybrid
+      INGESTION_METRICS_PORT: 8003
+      INGESTION_METRICS_ENABLED: "true"
+      INGESTION_DLQ_ENABLED: "true"
+
+      # Real-time sources
+      WS_ENABLED: ${WS_ENABLED:-true}
+      WS_NAME: finnhub
+      WS_URL: wss://ws.finnhub.io
+      WS_API_KEY: ${FINNHUB_API_KEY:-demo}
+      WS_SYMBOLS: '["AAPL","GOOGL","MSFT","AMZN"]'
+
+      SSE_ENABLED: ${SSE_ENABLED:-true}
+      SSE_NAME: dexpaprika
+      SSE_URL: https://api.dexpaprika.com/sse/prices
+      SSE_SYMBOLS: '["BTC","ETH","SOL"]'
+
+      POLLING_ENABLED: ${POLLING_ENABLED:-false}
+      POLLING_NAME: entsoe
+      POLLING_URL: https://web-api.tp.entsoe.eu/api
+      POLLING_API_KEY: ${ENTSOE_API_KEY:-}
+      POLLING_POLL_INTERVAL: ${POLLING_INTERVAL:-60}
+      POLLING_AREAS: '["DE","FR","NL"]'
+
+      # Batch sources
+      BATCH_ENABLED: ${BATCH_ENABLED:-true}
+      BATCH_NAME: batch
+      BATCH_DIRECTORY: /data/imports
+      BATCH_FILE_PATTERN: ${BATCH_PATTERN:-*.csv}
+
+  # ============================================
+  # APPLICATIONS - CONSUMERS
+  # ============================================
 
   consumer:
     build:
@@ -121,7 +267,7 @@ services:
       dockerfile: docker/consumer/Dockerfile
     container_name: trade-consumer
     ports:
-      - "8001:8001"  # Prometheus metrics
+      - "8001:8001"
     environment:
       <<: *common-env
       KAFKA_CONSUMER_GROUP: trade-aggregator
@@ -130,6 +276,8 @@ services:
     depends_on:
       kafka:
         condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
       timescaledb:
         condition: service_healthy
     restart: unless-stopped
@@ -198,25 +346,6 @@ services:
   # CHAT WITH DATA (Natural Language Queries)
   # ============================================
 
-  # Option A: Use local Ollama (default) - assumes Ollama running on host
-  # Option B: Uncomment ollama service below for Docker with GPU
-  #
-  # ollama:
-  #   image: ollama/ollama:latest
-  #   container_name: ollama
-  #   ports:
-  #     - "11434:11434"
-  #   volumes:
-  #     - ollama_data:/root/.ollama
-  #   deploy:
-  #     resources:
-  #       reservations:
-  #         devices:
-  #           - driver: nvidia
-  #             count: 1
-  #             capabilities: [gpu]
-  #   # Pull model: docker exec ollama ollama pull llama3.2
-
   chat:
     build:
       context: .
@@ -225,7 +354,6 @@ services:
     ports:
       - "7860:7860"
     environment:
-      # For local Ollama: use host.docker.internal (Docker Desktop) or host gateway
       OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.2}
       POSTGRES_DSN: postgresql://trading:trading@timescaledb:5432/trades
@@ -267,15 +395,12 @@ services:
       - prometheus
 
 volumes:
-  zookeeper_data:
-  zookeeper_logs:
   kafka_data:
   timescale_data:
   redis_data:
   superset_data:
   prometheus_data:
   grafana_data:
-  # ollama_data:  # Uncomment if using Docker Ollama
 
 networks:
   default:
