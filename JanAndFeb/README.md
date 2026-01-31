@@ -362,6 +362,131 @@ docker-compose logs -f producer consumer
 docker-compose down
 ```
 
+## Chaos Testing & Resilience Validation
+
+The platform includes a comprehensive chaos testing framework to validate pipeline resilience against common data issues.
+
+### Issue Types Covered
+
+| Category | Issue | Expected Behavior | DLQ? |
+|----------|-------|-------------------|------|
+| **Streaming** | Poison Pill (invalid JSON) | Route to DLQ, continue processing | ✅ |
+| **Streaming** | Schema Violation | Validation error → DLQ | ✅ |
+| **Streaming** | Duplicate Events | Handled idempotently | ❌ |
+| **Streaming** | Late Events | Grace period handling | ❌ |
+| **Streaming** | Out-of-Order | Event-time processing | ❌ |
+| **Streaming** | Encoding Issues | Detect and route to DLQ | ✅ |
+| **Batch** | Corrupt Files | Reject or partial process | ✅ |
+| **Batch** | Schema Drift | Validate and reject if required fields missing | ✅ |
+| **Batch** | Empty Files | Handle gracefully (0 records) | ❌ |
+| **Batch** | Wrong Format | Detect format mismatch | ✅ |
+
+### Running Chaos Tests
+
+```bash
+# Run all chaos tests (streaming + batch)
+python scripts/chaos/run_chaos_tests.py
+
+# Run streaming tests only
+python scripts/chaos/run_chaos_tests.py --streaming
+
+# Run batch tests only
+python scripts/chaos/run_chaos_tests.py --batch
+
+# Quick test (subset)
+python scripts/chaos/run_chaos_tests.py --quick
+
+# Export report
+python scripts/chaos/run_chaos_tests.py --output chaos_report.json --detailed
+```
+
+### DLQ Management
+
+```bash
+# Inspect DLQ contents
+python scripts/chaos/dlq_tool.py inspect
+
+# View detailed entries with fix suggestions
+python scripts/chaos/dlq_tool.py inspect --detailed
+
+# Filter by error type
+python scripts/chaos/dlq_tool.py inspect --error-type ValidationError
+
+# Export DLQ to JSON for analysis
+python scripts/chaos/dlq_tool.py export dlq_backup.json
+
+# Count messages in topics
+python scripts/chaos/dlq_tool.py count
+
+# Replay fixed messages
+python scripts/chaos/dlq_tool.py replay --file fixed_messages.json
+```
+
+### Manual Issue Injection
+
+For quick testing without the framework:
+
+```bash
+# Inject poison pill (invalid JSON)
+docker exec kafka kafka-console-producer \
+  --bootstrap-server localhost:9092 \
+  --topic trades <<< 'this is not valid json!'
+
+# Inject schema violation (missing fields)
+docker exec kafka kafka-console-producer \
+  --bootstrap-server localhost:9092 \
+  --topic trades <<< '{"bad": "data"}'
+
+# View DLQ messages
+docker exec kafka kafka-console-consumer \
+  --bootstrap-server localhost:9092 \
+  --topic trades-dlq \
+  --from-beginning
+```
+
+### Chaos Testing Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                        CHAOS TESTING FRAMEWORK                          │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                         │
+│  STREAMING ISSUES                    BATCH ISSUES                       │
+│  ┌─────────────────────┐            ┌─────────────────────┐            │
+│  │ • Poison Pills      │            │ • Corrupt Files     │            │
+│  │ • Schema Violations │            │ • Schema Drift      │            │
+│  │ • Duplicates        │            │ • Encoding Issues   │            │
+│  │ • Late Events       │            │ • Empty/Partial     │            │
+│  │ • Out-of-Order      │            │ • Wrong Format      │            │
+│  │ • High Volume       │            │ • Malformed Rows    │            │
+│  └──────────┬──────────┘            └──────────┬──────────┘            │
+│             │                                  │                        │
+│             └──────────────┬───────────────────┘                        │
+│                            ▼                                            │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │                    KAFKA (trades topic)                          │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+│                            │                                            │
+│                            ▼                                            │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │  CONSUMER (with DLQ Handler)                                     │   │
+│  │  • Parse JSON ────────────────┐                                  │   │
+│  │  • Validate Schema ───────────┼──▶ FAILURE ──▶ trades-dlq       │   │
+│  │  • Process Event              │                                  │   │
+│  │         │                     │                                  │   │
+│  │         ▼                     │                                  │   │
+│  │     SUCCESS ──▶ Aggregate ──▶ TimescaleDB                       │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+│                                                                         │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │  DLQ INSPECTOR                                                   │   │
+│  │  • Analyze errors            • Generate reports                  │   │
+│  │  • Suggest fixes             • Replay fixed messages             │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+│                                                                         │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
 ## Project Structure
 
 ```
@@ -381,7 +506,11 @@ Jan/
 ├── terraform/            # AWS infrastructure (ECS, MSK, RDS)
 │   ├── modules/          # Reusable Terraform modules
 │   └── environments/     # Environment-specific configs (dev)
-├── scripts/              # CD simulation scripts (Q13)
+├── scripts/              # CD simulation and chaos testing
+│   └── chaos/            # Chaos testing framework
+│       ├── streaming/    # Streaming issue simulators
+│       ├── batch/        # Batch issue simulators
+│       └── utils/        # DLQ inspector, Kafka helpers
 ├── docs/                 # Architecture and monitoring docs (Q1, Q2, Q11, Q14)
 ├── tests/                # Unit and integration tests
 └── .github/workflows/    # CI pipeline (Q12)

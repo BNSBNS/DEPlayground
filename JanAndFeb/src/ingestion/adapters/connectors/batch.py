@@ -150,15 +150,60 @@ class BatchConnector(BaseConnector):
         ]
 
     def _read_file(self, file_path: Path) -> pd.DataFrame:
-        """Read file into DataFrame based on extension."""
+        """Read file into DataFrame based on extension.
+
+        Handles common issues:
+        - Encoding detection and fallback
+        - Empty files
+        - Malformed rows (on_bad_lines='warn')
+        """
         suffix = file_path.suffix.lower()
 
+        # Check for empty file
+        if file_path.stat().st_size == 0:
+            self._logger.warning("Empty file detected", file=file_path.name)
+            return pd.DataFrame()
+
         if suffix == ".csv":
-            return pd.read_csv(file_path)
+            # Try UTF-8 first, fallback to other encodings
+            encodings = ["utf-8", "utf-8-sig", "latin-1", "cp1252"]
+            last_error = None
+
+            for encoding in encodings:
+                try:
+                    return pd.read_csv(
+                        file_path,
+                        encoding=encoding,
+                        on_bad_lines="warn",  # Log bad rows instead of failing
+                    )
+                except UnicodeDecodeError as e:
+                    last_error = e
+                    self._logger.debug(
+                        "Encoding failed, trying next",
+                        encoding=encoding,
+                        error=str(e),
+                    )
+                    continue
+                except pd.errors.EmptyDataError:
+                    self._logger.warning("File has no data", file=file_path.name)
+                    return pd.DataFrame()
+                except pd.errors.ParserError as e:
+                    self._logger.error("CSV parsing error", file=file_path.name, error=str(e))
+                    raise ValueError(f"CSV parsing error: {e}") from e
+
+            # If all encodings failed
+            raise ValueError(f"Failed to decode file with any encoding: {last_error}")
+
         elif suffix == ".json":
-            return pd.read_json(file_path)
+            try:
+                return pd.read_json(file_path)
+            except ValueError as e:
+                self._logger.error("JSON parsing error", file=file_path.name, error=str(e))
+                raise ValueError(f"JSON parsing error: {e}") from e
+
         elif suffix in (".parquet", ".pq"):
             return pd.read_parquet(file_path)
+
         else:
             raise ValueError(f"Unsupported file format: {suffix}")
 
@@ -229,11 +274,38 @@ class BatchConnector(BaseConnector):
                 rows=total_rows,
             )
 
-        except Exception as e:
+        except pd.errors.EmptyDataError:
+            self._logger.warning("Empty or header-only file", file=str(file_path))
+            # Mark as processed but yield nothing
+            self._processed_files.add(str(file_path))
+            self._save_checkpoint()
+            if self._archive_path:
+                self._archive_file(file_path)
+
+        except ValueError as e:
+            # Schema or format errors - log and mark for DLQ
             self._logger.error(
-                "Error processing file",
+                "File format/schema error",
                 file=str(file_path),
                 error=str(e),
+            )
+            # Yield error event for DLQ handling
+            yield {
+                "_error": True,
+                "_error_type": "FileFormatError",
+                "_error_message": str(e),
+                "_file": file_path.name,
+            }
+            # Still mark as processed to avoid retry loop
+            self._processed_files.add(str(file_path))
+            self._save_checkpoint()
+
+        except Exception as e:
+            self._logger.error(
+                "Unexpected error processing file",
+                file=str(file_path),
+                error=str(e),
+                error_type=type(e).__name__,
             )
             raise
 
