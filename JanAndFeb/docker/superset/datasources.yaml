@@ -1,0 +1,15 @@
+databases:
+  - database_name: trades
+    sqlalchemy_uri: postgresql://trading:trading@timescaledb:5432/trades
+    expose_in_sqllab: true
+    allow_ctas: true
+    allow_cvas: true
+    allow_dml: true
+    allow_run_async: true
+    extra: |
+      {
+        "allows_virtual_table_explore": true,
+        "schemas_allowed_for_file_upload": ["public"],
+        "metadata_params": {},
+        "engine_params": {}
+      }

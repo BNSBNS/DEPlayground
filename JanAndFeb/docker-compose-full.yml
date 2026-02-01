@@ -125,6 +125,8 @@ services:
       - ./sql/schema/001_create_trade_aggregates.sql:/docker-entrypoint-initdb.d/001_create_trade_aggregates.sql:ro
       - ./sql/schema/002_create_indexes.sql:/docker-entrypoint-initdb.d/002_create_indexes.sql:ro
       - ./sql/schema/003_timescaledb_setup.sql:/docker-entrypoint-initdb.d/003_timescaledb_setup.sql:ro
+      - ./sql/schema/004_add_lmp_columns.sql:/docker-entrypoint-initdb.d/004_add_lmp_columns.sql:ro
+      - ./sql/schema/006_dashboard_views.sql:/docker-entrypoint-initdb.d/006_dashboard_views.sql:ro
       - timescale_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-trading} -d ${POSTGRES_DB:-trades}"]
@@ -327,39 +329,28 @@ services:
     ports:
       - "8088:8088"
     environment:
-      # Use env vars from .env.secrets (fallback to dev defaults for local)
+      # Use env vars from .env (fallback to dev defaults for local)
       SUPERSET_SECRET_KEY: ${SUPERSET_SECRET_KEY:-energy-trading-local-dev-key}
       SQLALCHEMY_DATABASE_URI: "postgresql://${POSTGRES_USER:-trading}:${POSTGRES_PASSWORD:-trading}@timescaledb:5432/${POSTGRES_DB:-trades}"
       REDIS_URL: "redis://redis:6379/0"
+      SUPERSET_ADMIN_USERNAME: ${SUPERSET_ADMIN_USERNAME:-admin}
+      SUPERSET_ADMIN_PASSWORD: ${SUPERSET_ADMIN_PASSWORD:-admin}
+      SUPERSET_ADMIN_EMAIL: ${SUPERSET_ADMIN_EMAIL:-admin@localhost}
     volumes:
       - superset_data:/app/superset_home
+      - ./docker/superset/superset_config.py:/app/pythonpath/superset_config.py:ro
+      - ./docker/superset/superset-init.sh:/app/superset-init.sh:ro
+      - ./docker/superset/datasources.yaml:/app/datasources.yaml:ro
+      - ./docker/superset/bootstrap_dashboards.py:/app/bootstrap_dashboards.py:ro
+    entrypoint: ["/bin/bash", "/app/superset-init.sh"]
     depends_on:
       timescaledb:
         condition: service_healthy
       redis:
         condition: service_healthy
     # ==========================================================================
-    # SUPERSET INITIALIZATION (run after first start):
-    # ==========================================================================
-    # 1. Initialize the database:
-    #    docker exec superset superset db upgrade
-    #
-    # 2. Create admin user (use credentials from .env.secrets):
-    #    docker exec superset superset fab create-admin \
-    #      --username ${SUPERSET_ADMIN_USERNAME:-admin} \
-    #      --firstname Admin --lastname User \
-    #      --email ${SUPERSET_ADMIN_EMAIL:-admin@localhost} \
-    #      --password ${SUPERSET_ADMIN_PASSWORD:-admin}
-    #
-    # 3. Initialize Superset:
-    #    docker exec superset superset init
-    #
-    # Quick version (default admin/admin):
-    #    docker exec superset superset db upgrade && \
-    #    docker exec superset superset fab create-admin \
-    #      --username admin --firstname Admin --lastname User \
-    #      --email admin@local --password admin && \
-    #    docker exec superset superset init
+    # DASHBOARD SETUP (run once after Superset starts):
+    #   docker exec superset python /app/bootstrap_dashboards.py
     # ==========================================================================
 
   # ============================================
