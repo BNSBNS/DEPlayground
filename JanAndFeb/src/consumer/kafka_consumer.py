@@ -5,25 +5,31 @@ This module provides a high-level consumer that:
 - Aggregates them into 1-minute tumbling windows
 - Writes aggregates to PostgreSQL with idempotent upserts
 - Routes malformed messages to DLQ
+
+Key reliability improvements:
+1. Safe offset commit coordination (commit after DB write with retry)
+2. Window watermark tracking for safe shutdown
+3. True Kafka lag metrics (offset-based)
+4. Backpressure and flow control
+5. Memory guardrails
 """
 
 import json
-import signal
-import sys
 import time
 from datetime import UTC, datetime
-from typing import Any, NoReturn
 
-from confluent_kafka import Consumer, KafkaError, KafkaException, Message
+from confluent_kafka import KafkaError, Message
 from pydantic import ValidationError
 
 from src.common.config import ConsumerSettings, KafkaSettings, get_settings
 from src.common.kafka_utils import create_consumer, deserialize_message
 from src.common.logging_config import get_logger
 from src.common.models import TradeEvent
+from src.consumer.backpressure import BackpressureController, FlowState
 from src.consumer.db_writer import DatabaseWriter
 from src.consumer.dlq_handler import AlertingDLQHandler, DLQHandler
-from src.consumer.windowed_aggregator import WindowedAggregator
+from src.consumer.offset_manager import OffsetManager
+from src.consumer.windowed_aggregator import WindowedAggregator, WindowFlushResult
 from src.consumer import metrics
 
 logger = get_logger(__name__)
@@ -33,16 +39,26 @@ class TradeConsumer:
     """High-level trade event consumer with windowed aggregation.
 
     Implements the streaming consumer with:
-    - Safe restart behavior (resume from last committed offset)
-    - No duplicate aggregates on recovery (idempotent DB writes)
-    - Offset commit only after successful DB writes
-    - DLQ handling for malformed messages
+    - Safe offset commit coordination (DB write → commit with retry)
+    - Window watermark tracking for safe shutdown
+    - True Kafka lag monitoring (offset-based)
+    - Backpressure for stability under load
+    - Memory guardrails for aggregator state
+
+    The commit safety guarantee:
+    1. Process message → update window state (track offset in window)
+    2. When window completes → write aggregate to DB
+    3. If DB write succeeds → commit offsets with retry
+    4. If commit fails → data is safe (DB write is idempotent)
+
+    This ensures no data loss: worst case is duplicate processing
+    on restart, but idempotent DB writes handle that.
     """
 
     def __init__(
         self,
-        kafka_settings: KafkaSettings | None = None,
-        consumer_settings: ConsumerSettings | None = None,
+        kafka_settings: KafkaSettings,
+        consumer_settings: ConsumerSettings,
         *,
         db_writer: DatabaseWriter | None = None,
         dlq_handler: DLQHandler | None = None,
@@ -50,22 +66,37 @@ class TradeConsumer:
         """Initialize the trade consumer.
 
         Args:
-            kafka_settings: Kafka configuration.
-            consumer_settings: Consumer-specific configuration.
+            kafka_settings: Kafka configuration (explicitly passed, not global).
+            consumer_settings: Consumer-specific configuration (explicitly passed).
             db_writer: Database writer instance.
             dlq_handler: DLQ handler instance.
         """
-        settings = get_settings()
-        self._kafka_settings = kafka_settings or settings.kafka
-        self._consumer_settings = consumer_settings or settings.consumer
+        self._kafka_settings = kafka_settings
+        self._consumer_settings = consumer_settings
 
         # Create consumer with manual commit
         self._consumer = create_consumer(self._kafka_settings, auto_commit=False)
 
-        # Initialize aggregator
+        # Initialize offset manager for safe commit coordination
+        self._offset_manager = OffsetManager(
+            self._consumer,
+            max_commit_retries=3,
+            commit_retry_delay=0.5,
+        )
+
+        # Initialize backpressure controller
+        self._backpressure = BackpressureController(
+            self._consumer,
+            high_watermark=1000,
+            low_watermark=100,
+        )
+
+        # Initialize aggregator with offset tracking
         self._aggregator = WindowedAggregator(
             window_duration_seconds=self._consumer_settings.window_duration_seconds,
             late_event_grace_seconds=self._consumer_settings.late_event_grace_seconds,
+            max_windows=1000,
+            max_memory_mb=256,
         )
 
         # Initialize DB writer and DLQ handler
@@ -81,6 +112,27 @@ class TradeConsumer:
         self._messages_processed = 0
         self._aggregates_written = 0
         self._errors_handled = 0
+
+        # Lag metrics refresh interval
+        self._last_lag_refresh = 0.0
+        self._lag_refresh_interval = 10.0  # seconds
+
+    @classmethod
+    def from_settings(cls) -> "TradeConsumer":
+        """Create a TradeConsumer from global settings.
+
+        This is the bootstrap method - use this at application startup.
+        After creation, the consumer has explicit dependencies and doesn't
+        rely on global state.
+
+        Returns:
+            Configured TradeConsumer instance
+        """
+        settings = get_settings()
+        return cls(
+            kafka_settings=settings.kafka,
+            consumer_settings=settings.consumer,
+        )
 
     def _parse_message(self, msg: Message) -> TradeEvent:
         """Parse and validate a Kafka message into a TradeEvent.
@@ -107,9 +159,9 @@ class TradeConsumer:
 
         The processing flow:
         1. Parse and validate the message
-        2. Add trade to windowed aggregator
+        2. Add trade to windowed aggregator (with offset tracking)
         3. Write any completed aggregates to database
-        4. Commit offset only after successful DB write
+        4. Commit offsets for completed windows (with retry)
 
         If parsing fails, the message is sent to DLQ and offset is committed
         to prevent reprocessing the bad message.
@@ -121,35 +173,49 @@ class TradeConsumer:
         offset = msg.offset()
         start_time = time.perf_counter()
 
+        # Track message receipt
+        metrics.messages_received.labels(partition=str(partition)).inc()
+        self._backpressure.on_message_received()
+
         try:
             # Parse and validate
             trade = self._parse_message(msg)
 
-            # Add to aggregator, get completed windows
-            completed_aggregates = self._aggregator.add_trade(trade)
+            # Add to aggregator with offset tracking, get completed windows
+            completed_results = self._aggregator.add_trade(
+                trade,
+                partition=partition,
+                offset=offset,
+            )
 
-            # Write completed aggregates to database
-            if completed_aggregates:
-                db_start = time.perf_counter()
-                written = self._db_writer.write_aggregates_batch(completed_aggregates)
-                metrics.db_write_duration.observe(time.perf_counter() - db_start)
-                self._aggregates_written += written
-                for agg in completed_aggregates:
-                    metrics.aggregates_written.labels(symbol=agg.symbol).inc()
+            # Mark offset as processed
+            self._offset_manager.mark_processed(partition, offset)
 
-            # Commit offset after successful processing
-            self._consumer.commit(msg)
+            # Write completed aggregates to database and commit offsets
+            if completed_results:
+                self._write_and_commit(completed_results)
+
             self._messages_processed += 1
 
             # Update metrics
             metrics.messages_processed.labels(symbol=trade.symbol).inc()
             metrics.active_windows.set(self._aggregator.get_active_window_count())
+
+            # Update data freshness (event timestamp age - NOT lag)
             event_age = (datetime.now(UTC) - trade.event_timestamp).total_seconds()
             metrics.data_freshness.set(event_age)
+
+            # Legacy metric (deprecated but kept for compatibility)
             metrics.consumer_lag.labels(partition=str(partition)).set(event_age)
 
             # Record processing duration
             metrics.processing_duration.observe(time.perf_counter() - start_time)
+
+            # Update memory metrics
+            metrics.update_aggregator_memory(
+                self._aggregator.get_estimated_memory_usage(),
+                self._aggregator.max_memory_bytes,
+            )
 
             # Log progress periodically
             if self._messages_processed % 1000 == 0:
@@ -167,23 +233,130 @@ class TradeConsumer:
                 offset=offset,
             )
             # Commit offset to move past the bad message
-            self._consumer.commit(msg)
+            self._offset_manager.commit_up_to(partition, offset)
+
+        finally:
+            self._backpressure.on_message_completed()
+
+    def _write_and_commit(self, results: list[WindowFlushResult]) -> None:
+        """Write aggregates to database and commit corresponding offsets.
+
+        This is the critical coordination point:
+        1. Write all aggregates in a batch transaction
+        2. If successful, commit the maximum offset for each partition
+        3. If commit fails, log warning (DB write is idempotent)
+
+        Args:
+            results: List of window flush results with aggregates and offsets
+        """
+        if not results:
+            return
+
+        # Extract aggregates for batch write
+        aggregates = [r.aggregate for r in results]
+
+        # Write to database
+        db_start = time.perf_counter()
+        try:
+            written = self._db_writer.write_aggregates_batch(aggregates)
+            metrics.db_write_duration.observe(time.perf_counter() - db_start)
+            self._aggregates_written += written
+
+            for agg in aggregates:
+                metrics.aggregates_written.labels(symbol=agg.symbol).inc()
+
+        except Exception as e:
+            logger.error(
+                "Failed to write aggregates to database",
+                error=str(e),
+                count=len(aggregates),
+            )
+            # Don't commit offsets - will retry on restart
+            raise
+
+        # Collect maximum offset per partition across all results
+        partition_max_offsets: dict[int, int] = {}
+        for result in results:
+            for partition, offset in result.partition_offsets.items():
+                current_max = partition_max_offsets.get(partition, -1)
+                if offset > current_max:
+                    partition_max_offsets[partition] = offset
+
+        # Commit offsets with retry
+        commit_start = time.perf_counter()
+        for partition, offset in partition_max_offsets.items():
+            commit_result = self._offset_manager.commit_up_to(partition, offset)
+
+            # Record metrics
+            metrics.offset_commit_duration.observe(time.perf_counter() - commit_start)
+            metrics.record_offset_commit(
+                success=commit_result.success,
+                retried=commit_result.retry_count > 0,
+            )
+
+            if not commit_result.success:
+                # Log warning but don't fail - DB write is idempotent
+                logger.warning(
+                    "Offset commit failed after retries (data is safe due to idempotent writes)",
+                    partition=partition,
+                    offset=offset,
+                    error=commit_result.error,
+                )
+
+    def _refresh_lag_metrics(self) -> None:
+        """Refresh true Kafka lag metrics from broker.
+
+        This updates offset-based lag metrics periodically.
+        """
+        now = time.monotonic()
+        if now - self._last_lag_refresh < self._lag_refresh_interval:
+            return
+
+        self._last_lag_refresh = now
+
+        try:
+            self._offset_manager.refresh_watermarks()
+
+            # Update metrics for each partition
+            offset_stats = self._offset_manager.get_stats()
+            for partition, lag in offset_stats.get("partition_lags", {}).items():
+                partition_state = self._offset_manager._partitions.get(partition)
+                if partition_state:
+                    metrics.update_lag_metrics(
+                        partition=partition,
+                        high_watermark=partition_state.high_watermark,
+                        committed_offset=partition_state.last_committed_offset,
+                        processed_offset=partition_state.last_processed_offset,
+                    )
+
+            # Update total lag
+            metrics.update_total_lag(offset_stats.get("total_lag", 0))
+
+        except Exception as e:
+            logger.warning("Failed to refresh lag metrics", error=str(e))
 
     def _log_progress(self) -> None:
         """Log processing progress and aggregator state."""
         state = self._aggregator.get_state_summary()
+        offset_stats = self._offset_manager.get_stats()
+        bp_stats = self._backpressure.get_stats()
+
         logger.info(
             "Processing progress",
             messages_processed=self._messages_processed,
             aggregates_written=self._aggregates_written,
             errors_handled=self._errors_handled,
             active_windows=state["active_windows"],
+            total_lag=offset_stats.get("total_lag", 0),
+            backpressure_state=bp_stats.get("state", "unknown"),
+            memory_bytes=state.get("estimated_memory_bytes", 0),
         )
 
     def run(self) -> None:
         """Run the consumer continuously.
 
         Subscribes to the topic and processes messages until stopped.
+        Includes backpressure handling and periodic metric updates.
         """
         self._running = True
 
@@ -195,13 +368,33 @@ class TradeConsumer:
             consumer_group=self._kafka_settings.consumer_group,
         )
 
+        # Set consumer info metric
+        metrics.consumer_info.info({
+            "topic": self._kafka_settings.topic,
+            "consumer_group": self._kafka_settings.consumer_group,
+        })
+
         try:
             while self._running:
-                # Poll for messages with 1 second timeout
-                msg = self._consumer.poll(timeout=1.0)
+                # Check backpressure - wait if paused
+                if self._backpressure.wait_if_paused(timeout=0.5):
+                    metrics.update_backpressure_state("paused")
+                    continue
+
+                # Update backpressure metrics
+                bp_state = self._backpressure.state
+                metrics.update_backpressure_state(bp_state.value)
+                metrics.messages_in_flight.set(self._backpressure.in_flight_count)
+
+                # Get recommended poll timeout based on backpressure state
+                poll_timeout = self._backpressure.get_recommended_poll_timeout(1.0)
+
+                # Poll for messages
+                msg = self._consumer.poll(timeout=poll_timeout)
 
                 if msg is None:
-                    # No message, check for completed windows due to time
+                    # No message - refresh lag metrics
+                    self._refresh_lag_metrics()
                     continue
 
                 if msg.error():
@@ -223,6 +416,9 @@ class TradeConsumer:
                 # Process the message
                 self._process_message(msg)
 
+                # Periodically refresh lag metrics
+                self._refresh_lag_metrics()
+
         except KeyboardInterrupt:
             logger.info("Received interrupt signal")
         finally:
@@ -231,16 +427,51 @@ class TradeConsumer:
     def stop(self) -> None:
         """Stop the consumer gracefully.
 
-        Flushes remaining aggregates and closes connections.
+        Safe shutdown procedure:
+        1. Stop accepting new messages
+        2. Flush remaining aggregates
+        3. Write flushed aggregates to database
+        4. Commit offsets for flushed data
+        5. Close connections
         """
         self._running = False
 
-        # Flush remaining aggregates
+        # Resume if paused (for clean shutdown)
+        self._backpressure.force_resume()
+
+        # Flush remaining aggregates with offset information
         logger.info("Flushing remaining aggregates...")
-        remaining_aggregates = self._aggregator.flush_all()
-        if remaining_aggregates:
-            self._db_writer.write_aggregates_batch(remaining_aggregates)
-            self._aggregates_written += len(remaining_aggregates)
+        remaining_results = self._aggregator.flush_all()
+
+        if remaining_results:
+            try:
+                # Write to database
+                aggregates = [r.aggregate for r in remaining_results]
+                self._db_writer.write_aggregates_batch(aggregates)
+                self._aggregates_written += len(aggregates)
+
+                # Commit offsets for flushed windows
+                partition_max_offsets: dict[int, int] = {}
+                for result in remaining_results:
+                    for partition, offset in result.partition_offsets.items():
+                        current_max = partition_max_offsets.get(partition, -1)
+                        if offset > current_max:
+                            partition_max_offsets[partition] = offset
+
+                for partition, offset in partition_max_offsets.items():
+                    self._offset_manager.commit_up_to(partition, offset)
+
+                logger.info(
+                    "Flushed and committed remaining data",
+                    aggregates=len(aggregates),
+                    partitions=list(partition_max_offsets.keys()),
+                )
+
+            except Exception as e:
+                logger.error(
+                    "Error during shutdown flush",
+                    error=str(e),
+                )
 
         # Flush DLQ
         self._dlq_handler.flush()
@@ -256,6 +487,7 @@ class TradeConsumer:
             messages_processed=self._messages_processed,
             aggregates_written=self._aggregates_written,
             errors_handled=self._errors_handled,
+            offset_stats=self._offset_manager.get_stats(),
         )
 
     def check_health(self) -> dict[str, bool]:
@@ -266,14 +498,19 @@ class TradeConsumer:
         """
         kafka_healthy = True  # Consumer is running if we get here
         db_healthy = self._db_writer.check_connection()
+        bp_state = self._backpressure.state
+
+        # Consider unhealthy if paused for too long
+        not_paused = bp_state != FlowState.PAUSED
 
         return {
             "kafka": kafka_healthy,
             "database": db_healthy,
-            "overall": kafka_healthy and db_healthy,
+            "not_paused": not_paused,
+            "overall": kafka_healthy and db_healthy and not_paused,
         }
 
-    def get_stats(self) -> dict[str, int | dict[str, int | str | None]]:
+    def get_stats(self) -> dict:
         """Get consumer statistics.
 
         Returns:
@@ -285,4 +522,6 @@ class TradeConsumer:
             "errors_handled": self._errors_handled,
             "dlq_stats": self._dlq_handler.get_stats(),
             "aggregator_state": self._aggregator.get_state_summary(),
+            "offset_stats": self._offset_manager.get_stats(),
+            "backpressure_stats": self._backpressure.get_stats(),
         }
