@@ -141,6 +141,10 @@ class TradeAggregate(BaseModel):
         max_price: Maximum trade price in the window
         min_price: Minimum trade price in the window
         total_value: Sum of (price * volume) for VWAP calculation
+        lmp: Location Marginal Price (total)
+        lmp_energy: Energy component of LMP
+        lmp_congestion: Congestion component of LMP
+        lmp_loss: Loss component of LMP
     """
 
     model_config = ConfigDict(
@@ -159,19 +163,32 @@ class TradeAggregate(BaseModel):
     min_price: Decimal = Field(ge=Decimal("0"), decimal_places=8)
     total_value: Decimal = Field(ge=Decimal("0"), decimal_places=8)
 
-    @field_validator("vwap", "total_volume", "max_price", "min_price", "total_value", mode="before")
+    # LMP/LBMP pricing components (nullable for backward compatibility)
+    lmp: Decimal | None = Field(default=None, decimal_places=8)
+    lmp_energy: Decimal | None = Field(default=None, decimal_places=8)
+    lmp_congestion: Decimal | None = Field(default=None, decimal_places=8)
+    lmp_loss: Decimal | None = Field(default=None, decimal_places=8)
+
+    @field_validator(
+        "vwap", "total_volume", "max_price", "min_price", "total_value",
+        "lmp", "lmp_energy", "lmp_congestion", "lmp_loss",
+        mode="before"
+    )
     @classmethod
-    def convert_to_decimal(cls, v: float | int | str | Decimal) -> Decimal:
+    def convert_to_decimal(cls, v: float | int | str | Decimal | None) -> Decimal | None:
         """Convert numeric values to Decimal for precise arithmetic."""
+        if v is None:
+            return None
         if isinstance(v, Decimal):
             return v
         return Decimal(str(v))
 
-    def to_db_tuple(self) -> tuple[str, datetime, datetime, Decimal, Decimal, int, Decimal, Decimal]:
+    def to_db_tuple(self) -> tuple:
         """Convert to a tuple for PostgreSQL insertion.
 
         Returns tuple matching the column order in trade_aggregates table:
-        (symbol, window_start, window_end, vwap, total_volume, trade_count, max_price, min_price)
+        (symbol, window_start, window_end, vwap, total_volume, trade_count,
+         max_price, min_price, lmp, lmp_energy, lmp_congestion, lmp_loss)
         """
         return (
             self.symbol,
@@ -182,6 +199,10 @@ class TradeAggregate(BaseModel):
             self.trade_count,
             self.max_price,
             self.min_price,
+            self.lmp,
+            self.lmp_energy,
+            self.lmp_congestion,
+            self.lmp_loss,
         )
 
 

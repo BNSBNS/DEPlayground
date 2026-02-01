@@ -105,7 +105,42 @@ Thumbs.db
 k8s/secrets.yaml
 *.secret.yaml
 
+# =============================================================================
+# Security - Secrets and Credentials
+# =============================================================================
+.env.secrets
+*.secret
+*.secrets
+secrets/
+.secrets/
+
+# SSL/TLS certificates and keys
+*.pem
+*.key
+*.crt
+*.p12
+*.jks
+kafka/ssl/*.jks
+kafka/ssl/*.pem
+!kafka/ssl/generate-certs.sh
+
+# API keys and tokens
+*.apikey
+api_keys.json
+
+# =============================================================================
+# Lakehouse Data (large binary files)
+# =============================================================================
+data/lakehouse/
+data/imports/*.parquet
+!tests/fixtures/*.parquet
+
+# MinIO/S3 local data
+minio_data/
+
+# =============================================================================
 # Local development
+# =============================================================================
 *.local
 docker-compose.override.yml
 
