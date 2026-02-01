@@ -5,6 +5,32 @@ This is the comprehensive, fact-checked study plan covering all critical areas. 
 
 ---
 
+# RECOMMENDED STUDY SEQUENCE
+
+Start with this numbered sequence for optimal learning:
+
+| Order | Part | Topic | Prerequisites | Estimated Focus |
+|-------|------|-------|---------------|-----------------|
+| **1** | Part 1 | Architecture Overview | None | First - understand the big picture |
+| **2** | Part 2 | Streaming (Kafka) | Part 1 | Core streaming concepts |
+| **3** | Part 5 | Data Layer (TimescaleDB) | Parts 1-2 | How data is stored |
+| **4** | Part 3 | Observability (Grafana/Prometheus) | Parts 1-2 | Monitor what you built |
+| **5** | Part 6 | Critical Issues & Bugs | Parts 1-3, 5 | Understand limitations |
+| **6** | Part 7 | Reliability Patterns | Parts 2, 5-6 | Design for failure |
+| **7** | Part 4 | Analytics (Superset) | Part 5 | Business analytics |
+| **8** | Part 8 | API & Integration | Parts 1-2 | Expose your data |
+| **9** | Part 9 | Testing & Validation | Parts 1-8 | Verify correctness |
+| **10** | Part 10 | Chaos Testing Framework | Parts 6, 9 | Break things intentionally |
+| **11** | Part 11 | Failure Scenarios & Runbooks | Parts 6-7, 10 | Operational readiness |
+| **12** | Part 12 | Design Patterns | All above | Architectural understanding |
+| **13** | Part 13 | Common Issues & Resolution | All above | Troubleshooting reference |
+| **14** | Part 14 | Quick Reference | All above | Day-to-day commands |
+
+**Quick Start Path** (Parts 1 → 2 → 5 → 6 → 14): Get productive in ~1 week
+**Full Path** (All parts in order): Deep understanding in ~4-5 weeks
+
+---
+
 # TABLE OF CONTENTS
 
 1. [Part 1: Architecture Overview](#part-1-architecture-overview)
@@ -92,6 +118,88 @@ This is the comprehensive, fact-checked study plan covering all critical areas. 
    - At-least-once delivery guarantee
 ```
 
+## 1.4 Future-State Architecture (Production Scale)
+
+```
+                                    ENERGY TRADING PLATFORM (PRODUCTION)
+    ┌─────────────────────────────────────────────────────────────────────────────────┐
+    │                                                                                 │
+    │   ┌──────────────┐                                                              │
+    │   │  External    │                                                              │
+    │   │  APIs        │                                                              │
+    │   │ (EPEX, Nord  │                                                              │
+    │   │  Pool, etc.) │                                                              │
+    │   └──────┬───────┘                                                              │
+    │          │                                                                      │
+    │          ▼                                                                      │
+    │   ┌──────────────┐     ┌─────────────────────────────────────────────────┐     │
+    │   │   Trade      │     │                  KAFKA CLUSTER                  │     │
+    │   │   Producer   │────▶│  ┌─────────────┐  ┌─────────────┐               │     │
+    │   │  (Python K8s │     │  │   trades    │  │ trades-dlq  │               │     │
+    │   │   Pod)       │     │  │  (6 parts)  │  │  (3 parts)  │               │     │
+    │   └──────────────┘     │  └─────────────┘  └─────────────┘               │     │
+    │                        │         │                 ▲                      │     │
+    │                        │         │                 │ (malformed           │     │
+    │                        │         │                 │  messages)           │     │
+    │                        └─────────┼─────────────────┼─────────────────────┘     │
+    │                                  │                 │                            │
+    │                                  ▼                 │                            │
+    │                        ┌─────────────────┐         │                            │
+    │                        │    Streaming    │─────────┘                            │
+    │                        │    Consumer     │                                      │
+    │                        │  (Python K8s   │                                      │
+    │                        │   Pods x 2-6)  │                                      │
+    │                        └───────┬────────┘                                      │
+    │                                │                                               │
+    │          ┌─────────────────────┼─────────────────────┐                        │
+    │          │                     │                     │                        │
+    │          ▼                     ▼                     ▼                        │
+    │   ┌─────────────┐      ┌─────────────┐       ┌─────────────┐                 │
+    │   │ PostgreSQL  │      │  StarRocks  │       │   S3 Data   │                 │
+    │   │   (OLTP)    │      │   (OLAP)    │       │    Lake     │                 │
+    │   │             │      │             │       │  (Parquet)  │                 │
+    │   │ • Minute    │      │ • Dashboard │       │             │                 │
+    │   │   aggregates│      │   queries   │       │ • Raw logs  │                 │
+    │   │ • Recent    │      │ • Sub-sec   │       │ • Backtest  │                 │
+    │   │   data      │      │   latency   │       │   data      │                 │
+    │   └─────────────┘      └─────────────┘       └─────────────┘                 │
+    │        HOT                  HOT                   COLD                        │
+    │       PATH                 PATH                  PATH                         │
+    │                                                                               │
+    └───────────────────────────────────────────────────────────────────────────────┘
+```
+
+## 1.5 OLTP vs OLAP Boundary
+
+| Characteristic | PostgreSQL/TimescaleDB (OLTP) | StarRocks (OLAP) [Future] |
+|---------------|-------------------------------|---------------------------|
+| **Data Age** | Last 7-30 days | All historical |
+| **Query Pattern** | Point lookups, joins, upserts | Aggregations, scans |
+| **Latency** | 10-100ms (small data) | 10-100ms (large data) |
+| **Write Pattern** | Streaming upserts | Batch/streaming |
+| **Scaling** | Vertical + partitions | Horizontal |
+
+**Transition Trigger:** When PostgreSQL query latency exceeds SLO (e.g., > 500ms P99)
+
+## 1.6 Historical Data Flow to Cold Storage [Future]
+
+```
+Kafka (trades topic)
+       │
+       ├──► Consumer (aggregates → PostgreSQL)
+       │
+       └──► Kafka Connect S3 Sink ──► S3 (Parquet)
+                                           │
+                                           ▼
+                                    Quantitative Analysts
+                                    (Backtesting, ML)
+```
+
+**Implementation:** Kafka Connect with S3 Sink Connector
+- Format: Parquet (columnar, compressed)
+- Partitioning: By date (year/month/day)
+- Retention: Indefinite (cost-effective on S3)
+
 ---
 
 # PART 2: STREAMING (KAFKA)
@@ -178,10 +286,11 @@ def compute_vwap(self) -> Decimal:
 
 | Issue | Symptoms | Root Cause | Solution | Detection |
 |-------|----------|------------|----------|-----------|
-| Consumer Lag | Stale dashboards | Processing slower than production | Scale consumers, optimize processing | `kafka-consumer-groups --describe` |
-| Rebalancing Storm | Frequent partition reassignment | Short session timeout | Increase `session.timeout.ms` | Logs: "rebalance" |
-| Serialization Error | Consumer crashes | Malformed JSON | DLQ pattern (implemented) | Check `trades-dlq` topic |
+| Consumer Lag | Stale dashboards | Processing slower than production | [Scale consumers](#136-consumer-lag-resolution) | `kafka-consumer-groups --describe` |
+| Rebalancing Storm | Frequent partition reassignment | Short session timeout | [Increase timeout](#137-rebalancing-storm-resolution) | Logs: "rebalance" |
+| Serialization Error | Consumer crashes | Malformed JSON | [DLQ pattern](#132-poison-pill-resolution) | Check `trades-dlq` topic |
 | Out-of-Order Events | Incorrect VWAP | Network delays | Use event timestamp (implemented) | Compare event_timestamp vs processing time |
+| Late Events | Data corruption | Events after window eviction | [See critical bug](#61-critical-late-event-data-corruption) | Low trade_count after update |
 
 ## 2.6 Hands-On: Kafka Testing
 
@@ -893,11 +1002,42 @@ Use Avro/Protobuf with Schema Registry for enforced compatibility.
 
 ---
 
-## 7.2 State Recovery
+## 7.2 CAP Theorem and Consistency Models
+
+### CAP Theorem
+
+| Property | Definition | Our System |
+|----------|------------|------------|
+| **C**onsistency | All nodes see same data | PostgreSQL: strong |
+| **A**vailability | Always responds | Kafka: highly available |
+| **P**artition Tolerance | Works during network splits | Required in distributed systems |
+
+**Trade-off:** You can only guarantee 2 of 3.
+
+- **PostgreSQL/TimescaleDB:** CP (consistent, may reject writes if unavailable)
+- **Kafka:** AP (available, eventually consistent across replicas)
+
+### ACID vs BASE
+
+| ACID (PostgreSQL) | BASE (Kafka/NoSQL) |
+|-------------------|-------------------|
+| **A**tomicity - All or nothing | **B**asically **A**vailable |
+| **C**onsistency - Valid state transitions | **S**oft state |
+| **I**solation - No interference | **E**ventual consistency |
+| **D**urability - Survives crashes | |
+
+**Our hybrid approach:** Kafka (BASE) → PostgreSQL (ACID)
+- Kafka provides high availability and eventual consistency
+- PostgreSQL provides strong consistency for final aggregates
+- Combined effect: eventually consistent with idempotent writes
+
+---
+
+## 7.4 State Recovery
 
 ### Current Design
 
-**Source**: [windowed_aggregator.py:83-86](src/consumer/windowed_aggregator.py#L83-L86)
+**Source**: [windowed_aggregator.py](src/consumer/windowed_aggregator.py)
 
 ```
 - In-memory state (Python dict)
@@ -939,7 +1079,7 @@ watch -n 5 'docker exec kafka kafka-consumer-groups \
 
 ---
 
-## 7.3 Backpressure Handling
+## 7.5 Backpressure Handling
 
 ### The Problem
 During market volatility, trade volume spikes. Consumer can't keep up.
@@ -1791,13 +1931,13 @@ ON CONFLICT (symbol, window_start) DO UPDATE SET
 
 | Issue | Why It Happens | Detection | Resolution Code |
 |-------|----------------|-----------|-----------------|
-| **Poison Pill** | Truncated messages, binary corruption, encoding errors | `JSONDecodeError` in logs, DLQ count increases | See 13.2 |
-| **Schema Violation** | Producer schema change, missing fields, wrong types | `ValidationError` in logs, DLQ count | See 13.3 |
-| **Duplicate Events** | At-least-once delivery, producer retries, consumer restart | Compare trade_count vs expected | See 13.4 |
-| **Late Events** | Network delays, producer batching, cross-DC replication | Events with old timestamps, corrupted aggregates | See 13.5 |
-| **Consumer Lag** | Processing slower than ingestion, DB bottleneck | `kafka-consumer-groups --describe` shows growing lag | See 13.6 |
-| **Rebalancing Storm** | Short session timeout, unstable consumers | Frequent "rebalance" in logs | See 13.7 |
-| **Memory Pressure** | Too many open windows, large messages | OOMKilled pods, high memory metrics | See 13.8 |
+| **Poison Pill** | Truncated messages, binary corruption, encoding errors | `JSONDecodeError` in logs, DLQ count increases | [§13.2](#132-poison-pill-resolution) |
+| **Schema Violation** | Producer schema change, missing fields, wrong types | `ValidationError` in logs, DLQ count | [§13.3](#133-schema-violation-resolution) |
+| **Duplicate Events** | At-least-once delivery, producer retries, consumer restart | Compare trade_count vs expected | [§13.4](#134-duplicate-events-resolution) |
+| **Late Events** | Network delays, producer batching, cross-DC replication | Events with old timestamps, corrupted aggregates | [§13.5](#135-late-events-resolution) |
+| **Consumer Lag** | Processing slower than ingestion, DB bottleneck | `kafka-consumer-groups --describe` shows growing lag | [§13.6](#136-consumer-lag-resolution) |
+| **Rebalancing Storm** | Short session timeout, unstable consumers | Frequent "rebalance" in logs | [§13.7](#137-rebalancing-storm-resolution) |
+| **Memory Pressure** | Too many open windows, large messages | OOMKilled pods, high memory metrics | [§13.8](#138-memory-pressure-resolution) |
 
 ## 13.2 Poison Pill Resolution
 
@@ -2062,15 +2202,80 @@ resources:
 
 ## 13.9 Batch File Issues Summary
 
-| Issue | Why It Happens | Detection | Resolution |
-|-------|----------------|-----------|------------|
-| **Corrupt File** | Incomplete upload, disk error | CSV parsing error | Skip file, alert, retry later |
-| **Schema Drift** | Upstream changes, version mismatch | Missing columns | Schema validation before processing |
-| **Encoding Issue** | Legacy systems, cross-platform | UnicodeDecodeError | Try multiple encodings, use chardet |
-| **Empty File** | Failed extraction, no data | Zero rows | Skip gracefully, no error |
-| **Duplicate File** | Retry upload, backup copied | Same content hash | Idempotent processing, dedup by hash |
+| Issue | Why It Happens | Detection | Resolution Code |
+|-------|----------------|-----------|-----------------|
+| **Corrupt File** | Incomplete upload, disk error | CSV parsing error | [§13.10](#1310-corrupt-file-resolution) |
+| **Schema Drift** | Upstream changes, version mismatch | Missing columns | [§13.11](#1311-schema-drift-resolution) |
+| **Encoding Issue** | Legacy systems, cross-platform | UnicodeDecodeError | [§13.12](#1312-encoding-issue-resolution) |
+| **Empty File** | Failed extraction, no data | Zero rows | [§13.13](#1313-empty-file-resolution) |
+| **Duplicate File** | Retry upload, backup copied | Same content hash | [§13.14](#1314-duplicate-file-resolution) |
 
-**Resolution Code for Encoding Detection**:
+## 13.10 Corrupt File Resolution
+
+**Why**: File upload interrupted, disk corruption, or incomplete transfer.
+
+**Resolution Code**:
+```python
+import csv
+from pathlib import Path
+
+def safe_read_csv(filepath: Path) -> list[dict] | None:
+    """Read CSV with corruption handling."""
+    try:
+        with open(filepath, "r", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            rows = list(reader)
+            if not rows:
+                return None  # Empty file
+            return rows
+    except csv.Error as e:
+        logger.error(f"CSV parsing error in {filepath}: {e}")
+        # Move to quarantine directory
+        quarantine_dir = filepath.parent / "quarantine"
+        quarantine_dir.mkdir(exist_ok=True)
+        filepath.rename(quarantine_dir / filepath.name)
+        return None
+    except UnicodeDecodeError:
+        # Try encoding detection (see §13.12)
+        return None
+```
+
+## 13.11 Schema Drift Resolution
+
+**Why**: Upstream system changed column names or added/removed columns.
+
+**Resolution Code**:
+```python
+REQUIRED_COLUMNS = {"trade_id", "symbol", "price", "volume", "side", "event_timestamp"}
+
+def validate_schema(filepath: Path) -> bool:
+    """Validate CSV has required columns."""
+    with open(filepath, "r") as f:
+        reader = csv.reader(f)
+        header = next(reader, None)
+        if header is None:
+            return False
+
+        columns = set(header)
+        missing = REQUIRED_COLUMNS - columns
+
+        if missing:
+            logger.error(f"Missing columns in {filepath}: {missing}")
+            return False
+
+        # Extra columns are OK (forward compatible)
+        extra = columns - REQUIRED_COLUMNS
+        if extra:
+            logger.info(f"Extra columns ignored: {extra}")
+
+        return True
+```
+
+## 13.12 Encoding Issue Resolution
+
+**Why**: File created with non-UTF8 encoding (Latin-1, Windows-1252, etc.).
+
+**Resolution Code**:
 ```python
 import chardet
 
@@ -2092,11 +2297,80 @@ def detect_and_read(filepath: Path) -> str:
     return raw_bytes.decode(encoding)
 ```
 
+## 13.13 Empty File Resolution
+
+**Why**: Failed data extraction, no data for period, or process error.
+
+**Resolution Code**:
+```python
+def process_file(filepath: Path) -> int:
+    """Process file, handling empty gracefully."""
+    stat = filepath.stat()
+
+    # Zero-byte file
+    if stat.st_size == 0:
+        logger.info(f"Skipping empty file: {filepath}")
+        return 0
+
+    with open(filepath, "r") as f:
+        reader = csv.DictReader(f)
+        rows = list(reader)
+
+        # Header-only file
+        if not rows:
+            logger.info(f"Skipping header-only file: {filepath}")
+            return 0
+
+        for row in rows:
+            process_row(row)
+
+        return len(rows)
+```
+
+## 13.14 Duplicate File Resolution
+
+**Why**: Retry upload, backup file copied to input directory.
+
+**Resolution Code**:
+```python
+import hashlib
+from pathlib import Path
+
+# Track processed file hashes
+_processed_hashes: set[str] = set()
+
+def get_file_hash(filepath: Path) -> str:
+    """Compute SHA256 hash of file content."""
+    sha256 = hashlib.sha256()
+    with open(filepath, "rb") as f:
+        for chunk in iter(lambda: f.read(8192), b""):
+            sha256.update(chunk)
+    return sha256.hexdigest()
+
+def is_duplicate(filepath: Path) -> bool:
+    """Check if file content was already processed."""
+    file_hash = get_file_hash(filepath)
+
+    if file_hash in _processed_hashes:
+        logger.info(f"Skipping duplicate file: {filepath} (hash: {file_hash[:8]})")
+        return True
+
+    _processed_hashes.add(file_hash)
+    return False
+
+# Usage
+def process_batch_files(input_dir: Path):
+    for filepath in input_dir.glob("*.csv"):
+        if is_duplicate(filepath):
+            continue  # Skip duplicate
+        process_file(filepath)
+```
+
 ---
 
 # PART 14: QUICK REFERENCE
 
-## 12.1 Service URLs
+## 14.1 Service URLs
 
 | Service | URL | Credentials |
 |---------|-----|-------------|
@@ -2107,7 +2381,7 @@ def detect_and_read(filepath: Path) -> str:
 | API | http://localhost:8000 | None |
 | API Docs | http://localhost:8000/docs | None |
 
-## 12.2 Docker Commands
+## 14.2 Docker Commands
 
 ```bash
 # Start basic stack
@@ -2127,7 +2401,7 @@ docker-compose -f docker-compose-full.yml down
 docker-compose -f docker-compose-full.yml down -v
 ```
 
-## 12.3 Kafka Commands
+## 14.3 Kafka Commands
 
 ```bash
 # List topics
@@ -2164,7 +2438,7 @@ docker exec kafka kafka-consumer-groups \
   --dry-run
 ```
 
-## 12.4 Database Commands
+## 14.4 Database Commands
 
 ```bash
 # Connect to database
@@ -2175,7 +2449,7 @@ docker exec postgres psql -U trading -d trades -c "SELECT COUNT(*) FROM trade_ag
 docker exec postgres psql -U trading -d trades -c "SELECT * FROM trade_aggregates ORDER BY window_start DESC LIMIT 5"
 ```
 
-## 12.5 Metrics Commands
+## 14.5 Metrics Commands
 
 ```bash
 # Consumer metrics
@@ -2188,7 +2462,7 @@ curl -s http://localhost:8002/metrics | grep -E "^(trades_produced)"
 curl 'http://localhost:9090/api/v1/query?query=active_windows'
 ```
 
-## 12.6 Key File Locations
+## 14.6 Key File Locations
 
 | Category | Files |
 |----------|-------|
