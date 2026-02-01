@@ -11,8 +11,8 @@ version: "3.8"
 
 x-common-env: &common-env
   KAFKA_BOOTSTRAP_SERVERS: kafka:29092
-  POSTGRES_DSN: postgresql://trading:trading@timescaledb:5432/trades
-  LOG_LEVEL: INFO
+  POSTGRES_DSN: postgresql://${POSTGRES_USER:-trading}:${POSTGRES_PASSWORD:-trading}@timescaledb:5432/${POSTGRES_DB:-trades}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
 
 x-ingestion-base: &ingestion-base
   build:
@@ -116,9 +116,9 @@ services:
     image: timescale/timescaledb:latest-pg16
     container_name: timescaledb
     environment:
-      POSTGRES_USER: trading
-      POSTGRES_PASSWORD: trading
-      POSTGRES_DB: trades
+      POSTGRES_USER: ${POSTGRES_USER:-trading}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-trading}
+      POSTGRES_DB: ${POSTGRES_DB:-trades}
     ports:
       - "5432:5432"
     volumes:
@@ -127,7 +127,7 @@ services:
       - ./sql/schema/003_timescaledb_setup.sql:/docker-entrypoint-initdb.d/003_timescaledb_setup.sql:ro
       - timescale_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U trading -d trades"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-trading} -d ${POSTGRES_DB:-trades}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -327,8 +327,9 @@ services:
     ports:
       - "8088:8088"
     environment:
-      SUPERSET_SECRET_KEY: "energy-trading-local-dev-secret-key-change-in-prod"
-      SQLALCHEMY_DATABASE_URI: "postgresql://trading:trading@timescaledb:5432/trades"
+      # Use env vars from .env.secrets (fallback to dev defaults for local)
+      SUPERSET_SECRET_KEY: ${SUPERSET_SECRET_KEY:-energy-trading-local-dev-key}
+      SQLALCHEMY_DATABASE_URI: "postgresql://${POSTGRES_USER:-trading}:${POSTGRES_PASSWORD:-trading}@timescaledb:5432/${POSTGRES_DB:-trades}"
       REDIS_URL: "redis://redis:6379/0"
     volumes:
       - superset_data:/app/superset_home
@@ -337,10 +338,29 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    # Note: Run init commands after first start:
-    # docker exec superset superset db upgrade
-    # docker exec superset superset fab create-admin --username admin --firstname Admin --lastname User --email admin@local --password admin
-    # docker exec superset superset init
+    # ==========================================================================
+    # SUPERSET INITIALIZATION (run after first start):
+    # ==========================================================================
+    # 1. Initialize the database:
+    #    docker exec superset superset db upgrade
+    #
+    # 2. Create admin user (use credentials from .env.secrets):
+    #    docker exec superset superset fab create-admin \
+    #      --username ${SUPERSET_ADMIN_USERNAME:-admin} \
+    #      --firstname Admin --lastname User \
+    #      --email ${SUPERSET_ADMIN_EMAIL:-admin@localhost} \
+    #      --password ${SUPERSET_ADMIN_PASSWORD:-admin}
+    #
+    # 3. Initialize Superset:
+    #    docker exec superset superset init
+    #
+    # Quick version (default admin/admin):
+    #    docker exec superset superset db upgrade && \
+    #    docker exec superset superset fab create-admin \
+    #      --username admin --firstname Admin --lastname User \
+    #      --email admin@local --password admin && \
+    #    docker exec superset superset init
+    # ==========================================================================
 
   # ============================================
   # CHAT WITH DATA (Natural Language Queries)
@@ -356,7 +376,7 @@ services:
     environment:
       OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.2}
-      POSTGRES_DSN: postgresql://trading:trading@timescaledb:5432/trades
+      POSTGRES_DSN: postgresql://${POSTGRES_USER:-trading}:${POSTGRES_PASSWORD:-trading}@timescaledb:5432/${POSTGRES_DB:-trades}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
@@ -386,7 +406,8 @@ services:
     ports:
       - "3000:3000"
     environment:
-      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
       GF_USERS_ALLOW_SIGN_UP: "false"
     volumes:
       - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
