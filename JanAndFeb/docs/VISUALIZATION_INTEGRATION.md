@@ -2,6 +2,688 @@
 
 This guide explains how to connect to the Energy Trading Platform for real-time visualization and business intelligence reporting.
 
+---
+
+## All Tools at a Glance
+
+| Tool | URL | Login | Purpose |
+|------|-----|-------|---------|
+| **Grafana** | http://localhost:3000 | admin/admin | Time-series dashboards, Prometheus metrics |
+| **Superset** | http://localhost:8088 | admin/admin | SQL analytics, business dashboards |
+| **Kafka UI** | http://localhost:8080 | (none) | Kafka topic browser, message inspector |
+| **Prometheus** | http://localhost:9090 | (none) | Raw metrics, PromQL queries |
+| **API Docs** | http://localhost:8000/docs | (none) | Swagger UI, test endpoints |
+| **Chat** | http://localhost:7860 | (none) | Natural language queries |
+
+---
+
+## Quick Start: Grafana
+
+### What Grafana is For
+- **Time-series visualization** of metrics (trades/sec, latency, lag)
+- **Real-time dashboards** with auto-refresh
+- **Alerting** based on metric thresholds
+- **Data source**: Prometheus (metrics) + TimescaleDB (trade data)
+
+### First Steps
+
+1. Open http://localhost:3000
+2. Login: `admin` / `admin`
+3. Go to **Dashboards** → **New** → **New Dashboard**
+
+### Create Your First Panel (Trades per Second)
+
+1. Click **Add visualization**
+2. Select **Prometheus** as data source
+3. Enter query: `rate(trades_produced_total[1m])`
+4. Set title: "Trades per Second"
+5. Click **Apply**
+
+### Essential Grafana Queries (Prometheus)
+
+| What to See | PromQL Query |
+|-------------|--------------|
+| Trades produced/sec | `rate(trades_produced_total[1m])` |
+| Messages processed/sec | `rate(messages_processed_total[1m])` |
+| Kafka consumer lag | `kafka_consumer_lag_offsets` |
+| Active windows | `active_windows` |
+| Processing latency P95 | `histogram_quantile(0.95, rate(processing_duration_seconds_bucket[5m]))` |
+| DB write latency P99 | `histogram_quantile(0.99, rate(db_write_duration_seconds_bucket[5m]))` |
+
+### Create a Panel with Trade Data (TimescaleDB)
+
+1. Click **Add visualization**
+2. Select **TimescaleDB** as data source
+3. Enter SQL:
+```sql
+SELECT
+  $__timeGroup(window_start, '1m') as time,
+  symbol,
+  avg(vwap) as vwap
+FROM trade_aggregates
+WHERE $__timeFilter(window_start)
+GROUP BY 1, symbol
+ORDER BY 1
+```
+4. Set visualization to **Time series**
+5. Click **Apply**
+
+### Useful TimescaleDB Queries for Grafana
+
+```sql
+-- VWAP over time by symbol
+SELECT
+  $__timeGroup(window_start, '1m') as time,
+  symbol,
+  avg(vwap) as vwap
+FROM trade_aggregates
+WHERE $__timeFilter(window_start)
+GROUP BY 1, symbol
+ORDER BY 1
+
+-- Volume over time
+SELECT
+  $__timeGroup(window_start, '5m') as time,
+  symbol,
+  sum(total_volume) as volume
+FROM trade_aggregates
+WHERE $__timeFilter(window_start)
+GROUP BY 1, symbol
+ORDER BY 1
+
+-- Trade count heatmap
+SELECT
+  $__timeGroup(window_start, '1h') as time,
+  symbol,
+  sum(trade_count) as trades
+FROM trade_aggregates
+WHERE $__timeFilter(window_start)
+GROUP BY 1, symbol
+ORDER BY 1
+```
+
+### Recommended Dashboard Layout
+
+```
+┌────────────────────────────────────────────────────────────────┐
+│  Row 1: Key Metrics (Single Stat panels)                       │
+│  [Trades/sec] [Consumer Lag] [Active Windows] [DLQ Count]     │
+├────────────────────────────────────────────────────────────────┤
+│  Row 2: Throughput (Time series)                               │
+│  [Producer Rate vs Consumer Rate over time]                   │
+├────────────────────────────────────────────────────────────────┤
+│  Row 3: VWAP by Symbol (Time series)                          │
+│  [Line chart of VWAP per symbol]                              │
+├────────────────────────────────────────────────────────────────┤
+│  Row 4: Latency (Time series)                                 │
+│  [Processing latency P50/P95/P99]                             │
+└────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Quick Start: Superset
+
+### What Superset is For
+- **SQL exploration** via SQL Lab
+- **Business dashboards** with charts and filters
+- **Ad-hoc analysis** of trade aggregates
+- **Data source**: TimescaleDB (trade_aggregates table)
+
+### First Steps
+
+1. Open http://localhost:8088
+2. Login: `admin` / `admin`
+3. If first time, run bootstrap:
+   ```bash
+   docker exec superset python /app/bootstrap_dashboards.py
+   ```
+
+### Using SQL Lab (Interactive SQL)
+
+1. Go to **SQL** → **SQL Lab**
+2. Select database: **trades**
+3. Run queries against your data
+
+### Essential SQL Lab Queries
+
+```sql
+-- Quick health check: Is data flowing?
+SELECT COUNT(*), MAX(window_start) as latest
+FROM trade_aggregates
+WHERE window_start >= NOW() - INTERVAL '5 minutes';
+
+-- VWAP by symbol (last hour)
+SELECT
+    symbol,
+    ROUND(AVG(vwap)::numeric, 4) as avg_vwap,
+    SUM(total_volume) as total_volume,
+    SUM(trade_count) as trades
+FROM trade_aggregates
+WHERE window_start >= NOW() - INTERVAL '1 hour'
+GROUP BY symbol
+ORDER BY total_volume DESC;
+
+-- Hourly volume trend
+SELECT
+    DATE_TRUNC('hour', window_start) as hour,
+    symbol,
+    SUM(total_volume) as volume
+FROM trade_aggregates
+WHERE window_start >= NOW() - INTERVAL '24 hours'
+GROUP BY 1, 2
+ORDER BY 1, 2;
+
+-- Price volatility (spread analysis)
+SELECT
+    symbol,
+    ROUND(MIN(min_price)::numeric, 4) as low,
+    ROUND(MAX(max_price)::numeric, 4) as high,
+    ROUND((MAX(max_price) - MIN(min_price))::numeric, 4) as spread
+FROM trade_aggregates
+WHERE window_start >= NOW() - INTERVAL '24 hours'
+GROUP BY symbol
+ORDER BY spread DESC;
+
+-- DLQ errors (if any)
+SELECT error_type, COUNT(*), MAX(failed_at)
+FROM dlq_messages
+GROUP BY error_type
+ORDER BY COUNT(*) DESC;
+```
+
+### Creating Charts from SQL Lab
+
+1. Run your query in SQL Lab
+2. Click **Create Chart**
+3. Choose visualization type:
+   - **Line Chart**: For time series (VWAP over time)
+   - **Bar Chart**: For comparisons (volume by symbol)
+   - **Pie Chart**: For proportions (trade distribution)
+   - **Table**: For detailed data
+4. Configure axes and metrics
+5. Click **Save** → Add to dashboard
+
+### Pre-built Dashboard
+
+After running the bootstrap script, access:
+- **Dashboard**: http://localhost:8088/superset/dashboard/energy-trading/
+
+This includes:
+- VWAP by Symbol (line chart)
+- Trading Volume (bar chart)
+- Trade Distribution (pie chart)
+- Volume Heatmap
+- Top Movers (table)
+
+---
+
+## Quick Start: Kafka UI
+
+### What Kafka UI is For
+- **Browse topics** and see message counts
+- **Inspect messages** in real-time
+- **Monitor consumer groups** and lag
+- **View broker health**
+
+### First Steps
+
+1. Open http://localhost:8080
+2. No login required
+
+### Key Pages to Check
+
+| Page | What to Look For |
+|------|------------------|
+| **Topics** | `trades` (main), `trades-dlq` (errors), `trades-raw` |
+| **Messages** | Click topic → Messages tab to see actual data |
+| **Consumers** | Check `trade-aggregator` group lag |
+| **Brokers** | Should show 1 healthy broker |
+
+### Inspecting Messages
+
+1. Click **Topics** → **trades**
+2. Click **Messages** tab
+3. You'll see live trade events in JSON:
+```json
+{
+  "trade_id": "abc-123",
+  "symbol": "AAPL",
+  "price": "150.25",
+  "volume": "100",
+  "side": "BUY",
+  "timestamp": "2024-01-15T10:30:00Z"
+}
+```
+
+### Checking Consumer Lag
+
+1. Click **Consumers**
+2. Find `trade-aggregator`
+3. Check **Lag** column - should be low (< 100)
+
+If lag is high:
+- Consumer is behind
+- Check consumer logs: `docker logs trade-consumer`
+
+### Checking DLQ (Dead Letter Queue)
+
+1. Click **Topics** → **trades-dlq**
+2. Click **Messages**
+3. Each message shows:
+   - Original failed message
+   - Error type and message
+   - Timestamp of failure
+
+---
+
+## Quick Start: API & Swagger
+
+### What the API is For
+- **REST endpoints** for aggregates, VWAP, symbols
+- **WebSocket** for real-time streaming
+- **Swagger UI** for interactive testing
+
+### First Steps
+
+1. Open http://localhost:8000/docs
+2. Interactive API documentation with "Try it out"
+
+### Key Endpoints to Try
+
+| Endpoint | Method | What it Returns |
+|----------|--------|-----------------|
+| `/health` | GET | Service health status |
+| `/api/v1/symbols` | GET | List of trading symbols |
+| `/api/v1/aggregates` | GET | Trade aggregates (paginated) |
+| `/api/v1/aggregates/{symbol}` | GET | Aggregates for one symbol |
+| `/api/v1/vwap` | GET | VWAP summary per symbol |
+
+### Testing in Swagger UI
+
+1. Click on an endpoint (e.g., `/api/v1/aggregates`)
+2. Click **Try it out**
+3. Set parameters (e.g., `hours=1`, `limit=10`)
+4. Click **Execute**
+5. See the response
+
+### Quick cURL Examples
+
+```bash
+# Health check
+curl http://localhost:8000/health
+
+# List symbols
+curl http://localhost:8000/api/v1/symbols
+
+# Get VWAP (last hour)
+curl "http://localhost:8000/api/v1/vwap?hours=1"
+
+# Get aggregates for AAPL (last 4 hours)
+curl "http://localhost:8000/api/v1/aggregates/AAPL?hours=4&limit=50"
+```
+
+### WebSocket Streaming
+
+Connect to real-time streams:
+
+```javascript
+// In browser console or Node.js
+const ws = new WebSocket('ws://localhost:8000/ws/aggregates');
+ws.onmessage = (e) => console.log(JSON.parse(e.data));
+```
+
+Available WebSocket endpoints:
+- `ws://localhost:8000/ws/trades` - All raw trades
+- `ws://localhost:8000/ws/trades/{symbol}` - Trades for one symbol
+- `ws://localhost:8000/ws/aggregates` - Completed VWAP aggregates
+
+---
+
+## Quick Start: Chat Interface
+
+### What Chat is For
+- **Natural language queries** about your data
+- **Powered by Ollama** (local LLM)
+- **Converts questions to SQL** automatically
+
+### Prerequisites
+
+Chat requires Ollama running locally:
+```bash
+# Install Ollama (if not installed)
+# See: https://ollama.ai
+
+# Pull model
+ollama pull llama3.2
+
+# Verify it's running
+curl http://localhost:11434/api/tags
+```
+
+### First Steps
+
+1. Open http://localhost:7860
+2. Type questions in natural language
+
+### Example Questions to Ask
+
+```
+"What's the total trading volume in the last hour?"
+
+"Which symbol has the highest VWAP today?"
+
+"Show me the top 5 symbols by trade count"
+
+"What's the price range for AAPL in the last 24 hours?"
+
+"Are there any errors in the DLQ?"
+
+"How many trades happened per hour today?"
+```
+
+### How It Works
+
+1. You type a question
+2. LLM converts it to SQL
+3. SQL runs against TimescaleDB
+4. Results are formatted and returned
+
+### Troubleshooting Chat
+
+If chat doesn't respond:
+```bash
+# Check if Ollama is running
+curl http://localhost:11434/api/tags
+
+# Check chat container logs
+docker logs trade-chat
+
+# Verify Ollama URL in .env
+# OLLAMA_URL=http://host.docker.internal:11434
+```
+
+---
+
+## Hands-On Experiments
+
+These experiments help you understand the platform by doing. Run them in order.
+
+### Experiment 1: Watch Data Flow End-to-End
+
+**Goal:** See how a trade flows from producer → Kafka → consumer → database → API
+
+```bash
+# Terminal 1: Watch producer logs (generating trades)
+docker logs -f trade-producer
+
+# Terminal 2: Watch consumer logs (processing trades)
+docker logs -f trade-consumer
+
+# Terminal 3: Watch trades appear in Kafka UI
+# Open http://localhost:8080 → Topics → trades → Messages
+
+# Terminal 4: Query database to see aggregates
+docker exec timescaledb psql -U trading -d trades -c \
+  "SELECT symbol, window_start, vwap, trade_count FROM trade_aggregates ORDER BY window_start DESC LIMIT 5;"
+
+# Terminal 5: Check API is serving the data
+curl "http://localhost:8000/api/v1/vwap?hours=1" | jq
+```
+
+**What you learned:** The complete data pipeline from generation to API.
+
+---
+
+### Experiment 2: Understand Kafka Consumer Lag
+
+**Goal:** See what happens when the consumer falls behind
+
+```bash
+# Step 1: Check current lag in Prometheus
+# Open http://localhost:9090/graph
+# Query: kafka_consumer_lag_offsets
+
+# Step 2: Stop the consumer
+docker stop trade-consumer
+
+# Step 3: Watch lag increase in Prometheus
+# Run the same query - lag should grow as producer keeps sending
+
+# Step 4: Check Kafka UI
+# Open http://localhost:8080 → Consumers → trade-aggregator
+# Lag column shows messages waiting to be processed
+
+# Step 5: Restart consumer and watch it catch up
+docker start trade-consumer
+
+# Step 6: Watch lag decrease in Prometheus
+# Consumer processes backlog, lag returns to near-zero
+```
+
+**What you learned:** Consumer lag is real - if processing stops, messages queue up.
+
+---
+
+### Experiment 3: Inject a Bad Message (DLQ)
+
+**Goal:** See how invalid data is handled
+
+```bash
+# Step 1: Inject invalid JSON (poison pill)
+docker exec kafka kafka-console-producer \
+  --bootstrap-server localhost:9092 \
+  --topic trades <<< 'this is not valid JSON!'
+
+# Step 2: Watch consumer logs for error
+docker logs trade-consumer --tail 20
+
+# Step 3: Check DLQ in Kafka UI
+# Open http://localhost:8080 → Topics → trades-dlq → Messages
+# You'll see the failed message with error details
+
+# Step 4: Check DLQ in database
+docker exec timescaledb psql -U trading -d trades -c \
+  "SELECT error_type, error_message, failed_at FROM dlq_messages ORDER BY failed_at DESC LIMIT 5;"
+
+# Step 5: Check DLQ metric in Prometheus
+# Query: dlq_messages_total
+```
+
+**What you learned:** Invalid messages go to DLQ, not crash the pipeline.
+
+---
+
+### Experiment 4: Compare Prometheus vs Grafana
+
+**Goal:** Understand when to use each
+
+```bash
+# PROMETHEUS: Ad-hoc queries
+# Open http://localhost:9090/graph
+# Query: rate(trades_produced_total[1m])
+# Good for: Quick debugging, one-off questions
+
+# GRAFANA: Persistent dashboards
+# Open http://localhost:3000
+# Create a dashboard with the same query
+# Good for: Ongoing monitoring, team visibility
+
+# Try this: Create a Grafana panel
+# 1. New Dashboard → Add visualization
+# 2. Data source: Prometheus
+# 3. Query: rate(trades_produced_total[1m])
+# 4. Save it
+# Now you have a persistent view vs throwaway Prometheus queries
+```
+
+**What you learned:** Prometheus = ad-hoc queries, Grafana = persistent dashboards.
+
+---
+
+### Experiment 5: SQL Lab vs Pre-built Charts (Superset)
+
+**Goal:** Understand exploratory vs operational analytics
+
+```bash
+# SQL LAB: Exploratory (you don't know what you're looking for)
+# Open http://localhost:8088 → SQL → SQL Lab
+# Try queries like:
+SELECT symbol, COUNT(*) as trades, SUM(total_volume) as vol
+FROM trade_aggregates
+WHERE window_start >= NOW() - INTERVAL '1 hour'
+GROUP BY symbol
+ORDER BY vol DESC;
+
+# PRE-BUILT CHARTS: Operational (you check the same thing daily)
+# Go to Dashboards → Energy Trading Platform
+# These are saved views you don't recreate each time
+
+# Try this: Convert an SQL Lab query to a chart
+# 1. Run your query in SQL Lab
+# 2. Click "Create Chart"
+# 3. Choose visualization type (Bar Chart)
+# 4. Save to a dashboard
+```
+
+**What you learned:** SQL Lab for exploration, dashboards for routine monitoring.
+
+---
+
+### Experiment 6: Trace a Single Symbol
+
+**Goal:** Follow one symbol through the entire system
+
+```bash
+# Pick a symbol (e.g., AAPL)
+
+# 1. See it in Kafka messages
+# Kafka UI → Topics → trades → Messages
+# Search for "AAPL" in the message content
+
+# 2. Query aggregates in Superset SQL Lab
+SELECT * FROM trade_aggregates
+WHERE symbol = 'AAPL'
+ORDER BY window_start DESC
+LIMIT 20;
+
+# 3. Get it via API
+curl "http://localhost:8000/api/v1/aggregates/AAPL?hours=1" | jq
+
+# 4. Create a Grafana panel just for AAPL
+# Query: rate(messages_processed_total{symbol="AAPL"}[1m])
+
+# 5. Ask Chat about it
+# Open http://localhost:7860
+# "What's the VWAP for AAPL in the last hour?"
+```
+
+**What you learned:** Same data accessible via multiple interfaces.
+
+---
+
+### Experiment 7: Understand Window Aggregation
+
+**Goal:** See how 1-minute windows work
+
+```bash
+# Step 1: Query raw vs aggregated
+docker exec timescaledb psql -U trading -d trades -c "
+  SELECT
+    window_start,
+    window_end,
+    trade_count,
+    vwap
+  FROM trade_aggregates
+  WHERE symbol = 'AAPL'
+  ORDER BY window_start DESC
+  LIMIT 5;
+"
+
+# Step 2: Watch a window close in Prometheus
+# Query: active_windows
+# This shows how many windows are currently being built
+
+# Step 3: Watch aggregates_written increase
+# Query: rate(aggregates_written_total[1m])
+# Each bump = a window closed and was written to DB
+
+# Step 4: Check window timing
+# Notice window_start is always on the minute boundary (10:01:00, 10:02:00)
+# Events within that minute are aggregated together
+```
+
+**What you learned:** Trades are grouped into 1-minute tumbling windows.
+
+---
+
+### Experiment 8: Stress Test with Burst Mode
+
+**Goal:** See how the system handles load spikes
+
+```bash
+# Step 1: Check current throughput in Prometheus
+# Query: rate(trades_produced_total[1m])
+# Note the baseline rate (probably ~10/sec)
+
+# Step 2: Check if burst mode is active
+# Query: producer_burst_mode
+# 0 = normal, 1 = burst
+
+# Step 3: Wait for burst (happens every 5 minutes for 30 seconds)
+# Or trigger manually by restarting producer near burst time
+
+# Step 4: Watch metrics during burst
+# - trades_produced_total rate should spike
+# - kafka_consumer_lag_offsets might increase
+# - active_windows might increase
+
+# Step 5: See how quickly consumer catches up after burst
+```
+
+**What you learned:** System handles load spikes, temporary lag is normal.
+
+---
+
+### Experiment 9: Break and Fix Something
+
+**Goal:** Practice troubleshooting
+
+```bash
+# Break: Stop the database
+docker stop timescaledb
+
+# Observe:
+# - Consumer logs show connection errors
+# - Prometheus: Check for error metrics
+# - API: curl http://localhost:8000/health (should fail)
+
+# Fix: Restart database
+docker start timescaledb
+
+# Observe recovery:
+# - Consumer reconnects
+# - Health returns to normal
+# - Lag (if any) is processed
+```
+
+**What you learned:** Failure modes and recovery behavior.
+
+---
+
+### Quick Reference: What Tool for What Question?
+
+| Question Type | Tool | Why |
+|--------------|------|-----|
+| "Is data flowing right now?" | Prometheus/Grafana | Real-time metrics |
+| "What's in the Kafka topic?" | Kafka UI | Message inspection |
+| "What does this symbol's data look like?" | Superset SQL Lab | Exploratory SQL |
+| "Show me daily volume trends" | Superset Dashboard | Pre-built charts |
+| "What was the VWAP at 3pm yesterday?" | API | Programmatic access |
+| "Tell me about today's trading" | Chat | Natural language |
+
+---
+
 ## Quick Start
 
 ### 1. Start the Full Stack

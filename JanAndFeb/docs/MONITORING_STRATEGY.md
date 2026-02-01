@@ -6,6 +6,150 @@ This document defines the monitoring strategy for the Energy Trading Platform, i
 
 ---
 
+## Quick Start: Using Prometheus
+
+### Access Points
+
+| Tool | URL | Purpose |
+|------|-----|---------|
+| Prometheus | http://localhost:9090 | Query metrics, check targets |
+| Grafana | http://localhost:3000 | Dashboards (admin/admin) |
+
+### Prometheus UI Tabs
+
+1. **Graph** (`/graph`) - Query and visualize metrics
+2. **Targets** (`/targets`) - Check if scrapers are working (should show "UP")
+3. **Alerts** (`/alerts`) - View active alerts (if rules configured)
+
+### Essential Queries to Run
+
+Copy these into the Prometheus Graph tab and click "Execute":
+
+#### 1. System Health Check
+```promql
+# Are services being scraped? (should return data)
+up
+
+# How many trades produced in last 5 minutes?
+increase(trades_produced_total[5m])
+
+# Current Kafka consumer lag (are we keeping up?)
+kafka_consumer_lag_offsets
+```
+
+#### 2. Producer Metrics
+```promql
+# Trades produced per second (rate over 1 minute)
+rate(trades_produced_total[1m])
+
+# Is burst mode active? (1=yes, 0=no)
+producer_burst_mode
+
+# Current production rate setting
+producer_current_rate
+```
+
+#### 3. Consumer Metrics
+```promql
+# Messages processed per second
+rate(messages_processed_total[1m])
+
+# Active aggregation windows (memory usage indicator)
+active_windows
+
+# Aggregates written to database per minute
+rate(aggregates_written_total[1m])
+
+# Processing latency (95th percentile)
+histogram_quantile(0.95, rate(processing_duration_seconds_bucket[5m]))
+```
+
+#### 4. Kafka Lag (Most Important!)
+```promql
+# Lag per partition (should be low, ideally < 100)
+kafka_consumer_lag_offsets
+
+# Total lag across all partitions
+kafka_consumer_lag_total
+
+# High watermark (latest offset in each partition)
+kafka_high_watermark_offset
+
+# Committed offset (where consumer has checkpointed)
+kafka_committed_offset
+```
+
+#### 5. Error Detection
+```promql
+# Messages sent to Dead Letter Queue (should be 0)
+dlq_messages_total
+
+# Offset commit failures
+offset_commits_total{status="failed"}
+
+# Backpressure state (0=flowing, 1=throttled, 2=paused)
+backpressure_state
+```
+
+### Interpreting Results
+
+| Metric | Good | Warning | Bad |
+|--------|------|---------|-----|
+| `kafka_consumer_lag_offsets` | < 100 | 100-10,000 | > 10,000 |
+| `active_windows` | < 100 | 100-500 | > 500 |
+| `backpressure_state` | 0 (flowing) | 1 (throttled) | 2 (paused) |
+| `dlq_messages_total` | 0 | 1-10 | > 10 |
+| Processing latency P95 | < 50ms | 50-250ms | > 250ms |
+
+### Common Scenarios
+
+**Q: Is the pipeline working?**
+```promql
+# Check all services are up
+up == 1
+
+# Check data is flowing
+rate(trades_produced_total[1m]) > 0
+rate(messages_processed_total[1m]) > 0
+```
+
+**Q: Why is the dashboard showing stale data?**
+```promql
+# Check consumer lag - if high, consumer is behind
+kafka_consumer_lag_offsets
+
+# Check if consumer is paused
+backpressure_state == 2
+
+# Check for errors
+dlq_messages_total
+```
+
+**Q: Is the database keeping up?**
+```promql
+# Database write latency
+histogram_quantile(0.99, rate(db_write_duration_seconds_bucket[5m]))
+
+# Aggregates being written
+rate(aggregates_written_total[1m])
+```
+
+### Connecting Grafana to Prometheus
+
+Grafana is pre-configured to use Prometheus. To verify:
+
+1. Go to http://localhost:3000 (admin/admin)
+2. Navigate to **Connections** → **Data sources**
+3. You should see "Prometheus" pointing to `http://prometheus:9090`
+
+To create a panel:
+1. Click **+** → **Dashboard** → **Add visualization**
+2. Select "Prometheus" as data source
+3. Enter a PromQL query (e.g., `rate(trades_produced_total[1m])`)
+4. Choose visualization type (Time series, Gauge, Stat, etc.)
+
+---
+
 ## Key Metrics
 
 ### Kafka Metrics

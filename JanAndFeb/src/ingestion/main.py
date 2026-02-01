@@ -185,15 +185,6 @@ async def run_ingestion_service() -> None:
     # Create manager
     manager = await create_ingestion_manager(settings)
 
-    # Check if we have any connectors
-    if not manager._connectors:
-        logger.error(
-            "No connectors configured",
-            mode=mode.value,
-            hint=_get_mode_hint(mode),
-        )
-        sys.exit(1)
-
     # Setup signal handlers
     shutdown_event = asyncio.Event()
 
@@ -209,7 +200,36 @@ async def run_ingestion_service() -> None:
             # Windows doesn't support add_signal_handler
             signal.signal(sig, lambda s, f: signal_handler(signal.Signals(s)))
 
-    # Start manager
+    # Check if we have any connectors - fail gracefully instead of crashing
+    if not manager._connectors:
+        logger.warning(
+            "No connectors configured - service will idle",
+            mode=mode.value,
+            hint=_get_mode_hint(mode),
+        )
+
+        # Start metrics server anyway so health checks work
+        if manager._metrics:
+            manager._metrics.start_server()
+            logger.info(
+                "Metrics server started (no connectors)",
+                port=ingestion_settings.metrics_port,
+            )
+
+        # Wait gracefully, logging periodic reminders
+        reminder_interval = 60  # seconds
+        while not shutdown_event.is_set():
+            try:
+                await asyncio.wait_for(shutdown_event.wait(), timeout=reminder_interval)
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "Still waiting - no connectors configured",
+                    mode=mode.value,
+                    hint=_get_mode_hint(mode),
+                )
+        return
+
+    # Start manager with connectors
     try:
         await manager.start()
 
