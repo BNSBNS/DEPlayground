@@ -172,30 +172,49 @@ def ensure_topics_exist(
                 raise
 
 
-def delivery_callback(err: KafkaError | None, msg: Any) -> None:
-    """Callback for producer delivery reports.
+class DeliveryCallbackMixin:
+    """Mixin providing Kafka delivery callback with Template Method pattern.
 
-    This callback is invoked for every message produced, indicating
-    whether delivery was successful or failed.
+    Provides a standardized delivery callback that tracks errors and allows
+    subclasses to customize behavior through hook methods.
 
-    Args:
-        err: Error if delivery failed, None if successful.
-        msg: The message that was delivered (or failed).
+    Attributes:
+        _delivery_errors: Count of failed deliveries
+
+    Example:
+        ```python
+        class MyProducer(DeliveryCallbackMixin):
+            def _on_delivery_failure(self, err, msg):
+                metrics.failures.inc()
+                self._logger.error("Failed", error=str(err))
+
+            def _on_delivery_success(self, msg):
+                self._logger.debug("Delivered", offset=msg.offset())
+        ```
     """
-    if err is not None:
-        logger.error(
-            "Message delivery failed",
-            error=str(err),
-            topic=msg.topic(),
-            partition=msg.partition(),
-        )
-    else:
-        logger.debug(
-            "Message delivered",
-            topic=msg.topic(),
-            partition=msg.partition(),
-            offset=msg.offset(),
-        )
+
+    _delivery_errors: int = 0
+
+    def _delivery_callback(self, err: KafkaError | None, msg: Any) -> None:
+        """Handle delivery confirmation (Template Method).
+
+        Args:
+            err: Error if delivery failed, None if successful.
+            msg: The Kafka message object.
+        """
+        if err is not None:
+            self._delivery_errors += 1
+            self._on_delivery_failure(err, msg)
+        else:
+            self._on_delivery_success(msg)
+
+    def _on_delivery_failure(self, _err: KafkaError, _msg: Any) -> None:
+        """Hook for custom failure handling. Override in subclass."""
+        pass
+
+    def _on_delivery_success(self, _msg: Any) -> None:
+        """Hook for custom success handling. Override in subclass."""
+        pass
 
 
 def serialize_message(data: dict[str, Any]) -> bytes:

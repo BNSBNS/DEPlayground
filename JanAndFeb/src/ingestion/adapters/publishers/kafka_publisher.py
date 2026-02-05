@@ -11,16 +11,18 @@ import structlog
 
 from ingestion.ports import EventPublisherPort, PublishError
 from ingestion.domain.models import EnrichedTradeEvent
+from src.common.kafka_utils import DeliveryCallbackMixin
 
 
 logger = structlog.get_logger()
 
 
-class KafkaPublisher(EventPublisherPort):
+class KafkaPublisher(DeliveryCallbackMixin, EventPublisherPort):
     """Kafka publisher for trade events.
 
     Implements the EventPublisherPort interface for publishing
-    EnrichedTradeEvent to Kafka topics.
+    EnrichedTradeEvent to Kafka topics. Uses DeliveryCallbackMixin
+    for standardized delivery callback handling.
 
     Example:
         ```python
@@ -76,7 +78,6 @@ class KafkaPublisher(EventPublisherPort):
 
         self._producer: Producer | None = None
         self._delivered_count = 0
-        self._failed_count = 0
         self._pending_count = 0
 
         self._logger = logger.bind(
@@ -92,25 +93,28 @@ class KafkaPublisher(EventPublisherPort):
         return self._producer
 
     def _delivery_callback(self, err: KafkaError | None, msg: Any) -> None:
-        """Handle delivery confirmation."""
+        """Handle delivery confirmation with pending count tracking."""
         self._pending_count -= 1
+        super()._delivery_callback(err, msg)
 
-        if err is not None:
-            self._failed_count += 1
-            self._logger.error(
-                "Delivery failed",
-                error=str(err),
-                topic=msg.topic(),
-                partition=msg.partition(),
-            )
-        else:
-            self._delivered_count += 1
-            self._logger.debug(
-                "Delivered",
-                topic=msg.topic(),
-                partition=msg.partition(),
-                offset=msg.offset(),
-            )
+    def _on_delivery_failure(self, err: KafkaError, msg: Any) -> None:
+        """Handle delivery failure - log with context."""
+        self._logger.error(
+            "Delivery failed",
+            error=str(err),
+            topic=msg.topic(),
+            partition=msg.partition(),
+        )
+
+    def _on_delivery_success(self, msg: Any) -> None:
+        """Handle successful delivery - increment counter and log."""
+        self._delivered_count += 1
+        self._logger.debug(
+            "Delivered",
+            topic=msg.topic(),
+            partition=msg.partition(),
+            offset=msg.offset(),
+        )
 
     def _serialize_event(self, event: EnrichedTradeEvent) -> bytes:
         """Serialize event to JSON bytes."""
@@ -248,7 +252,7 @@ class KafkaPublisher(EventPublisherPort):
             self._logger.info(
                 "Kafka producer closed",
                 delivered=self._delivered_count,
-                failed=self._failed_count,
+                failed=self._delivery_errors,
             )
 
     def get_stats(self) -> dict[str, Any]:
@@ -257,7 +261,7 @@ class KafkaPublisher(EventPublisherPort):
             "bootstrap_servers": self._bootstrap_servers,
             "topic": self._topic,
             "delivered_count": self._delivered_count,
-            "failed_count": self._failed_count,
+            "failed_count": self._delivery_errors,
             "pending_count": self._pending_count,
             "producer_active": self._producer is not None,
         }

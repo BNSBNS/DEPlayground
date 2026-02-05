@@ -11,14 +11,14 @@ from typing import Any
 from confluent_kafka import Producer
 
 from src.common.config import KafkaSettings, get_settings
-from src.common.kafka_utils import create_producer, serialize_message
+from src.common.kafka_utils import create_producer, DeliveryCallbackMixin, serialize_message
 from src.common.logging_config import get_logger
 from src.common.models import DLQMessage
 
 logger = get_logger(__name__)
 
 
-class DLQHandler:
+class DLQHandler(DeliveryCallbackMixin):
     """Dead Letter Queue handler for failed messages.
 
     When a message cannot be processed (validation error, malformed JSON, etc.),
@@ -26,6 +26,8 @@ class DLQHandler:
     1. Wraps the message with error context
     2. Publishes to the DLQ topic for later investigation
     3. Logs the failure for monitoring/alerting
+
+    Uses DeliveryCallbackMixin for standardized delivery callback handling.
 
     This ensures the consumer can continue processing subsequent messages
     rather than getting stuck on a bad message.
@@ -135,19 +137,20 @@ class DLQHandler:
                 offset=dlq_message.offset,
             )
 
-    def _delivery_callback(self, err: Exception | None, msg: Any) -> None:
-        """Handle DLQ delivery confirmation."""
-        if err is not None:
-            logger.error(
-                "DLQ message delivery failed",
-                error=str(err),
-            )
-        else:
-            logger.debug(
-                "DLQ message delivered",
-                topic=msg.topic(),
-                partition=msg.partition(),
-            )
+    def _on_delivery_failure(self, err: Exception, _msg: Any) -> None:
+        """Handle DLQ delivery failure."""
+        logger.error(
+            "DLQ message delivery failed",
+            error=str(err),
+        )
+
+    def _on_delivery_success(self, msg: Any) -> None:
+        """Handle successful DLQ delivery."""
+        logger.debug(
+            "DLQ message delivered",
+            topic=msg.topic(),
+            partition=msg.partition(),
+        )
 
     def flush(self, timeout: float = 5.0) -> int:
         """Flush pending DLQ messages.

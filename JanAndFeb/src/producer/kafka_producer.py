@@ -12,7 +12,7 @@ from confluent_kafka import KafkaException, Producer
 from src.common.config import KafkaSettings, ProducerSettings, get_settings
 from src.common.kafka_utils import (
     create_producer,
-    delivery_callback,
+    DeliveryCallbackMixin,
     serialize_message,
 )
 from src.common.logging_config import get_logger
@@ -23,14 +23,14 @@ from src.producer import metrics
 logger = get_logger(__name__)
 
 
-class TradeProducer:
+class TradeProducer(DeliveryCallbackMixin):
     """High-level trade event producer.
 
     Produces trade events to Kafka with:
     - Configurable production rate
     - Burst mode support for simulating market volatility
     - Graceful shutdown with message flushing
-    - Delivery confirmation via callbacks
+    - Delivery confirmation via callbacks (via DeliveryCallbackMixin)
     """
 
     def __init__(
@@ -57,7 +57,6 @@ class TradeProducer:
 
         # Statistics
         self._total_produced = 0
-        self._failed_deliveries = 0
 
     @property
     def producer(self) -> Producer:
@@ -66,22 +65,18 @@ class TradeProducer:
             self._producer = create_producer(self.kafka_settings)
         return self._producer
 
-    def _delivery_callback(
-        self,
-        err: Exception | None,
-        msg: object,
-    ) -> None:
-        """Handle delivery confirmation or failure."""
-        if err is not None:
-            self._failed_deliveries += 1
-            metrics.trades_failed.inc()
-            logger.error(
-                "Trade delivery failed",
-                error=str(err),
-                total_failed=self._failed_deliveries,
-            )
-        else:
-            logger.debug("Trade delivered successfully")
+    def _on_delivery_failure(self, err: Exception, _msg: object) -> None:
+        """Handle delivery failure - update metrics and log."""
+        metrics.trades_failed.inc()
+        logger.error(
+            "Trade delivery failed",
+            error=str(err),
+            total_failed=self._delivery_errors,
+        )
+
+    def _on_delivery_success(self, _msg: object) -> None:
+        """Handle successful delivery."""
+        logger.debug("Trade delivered successfully")
 
     def produce_trade(self, trade: TradeEvent) -> None:
         """Produce a single trade event to Kafka.
@@ -206,7 +201,7 @@ class TradeProducer:
                     logger.info(
                         "Production progress",
                         total_produced=self._total_produced,
-                        failed=self._failed_deliveries,
+                        failed=self._delivery_errors,
                         in_burst=in_burst,
                     )
 
@@ -236,7 +231,7 @@ class TradeProducer:
         logger.info(
             "Producer stopped",
             total_produced=self._total_produced,
-            failed=self._failed_deliveries,
+            failed=self._delivery_errors,
         )
 
     def get_stats(self) -> dict[str, int]:
@@ -247,5 +242,5 @@ class TradeProducer:
         """
         return {
             "total_produced": self._total_produced,
-            "failed_deliveries": self._failed_deliveries,
+            "failed_deliveries": self._delivery_errors,
         }
