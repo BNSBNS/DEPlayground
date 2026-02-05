@@ -11,26 +11,13 @@ Medallion Architecture Layers:
 
 from datetime import datetime, UTC
 from decimal import Decimal
-from enum import Enum
 from typing import Any
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-
-class SourceType(str, Enum):
-    """Data source type classification.
-
-    Each type has different latency characteristics and connection patterns.
-    """
-
-    WEBSOCKET = "websocket"      # Real-time bidirectional (~20-170ms)
-    SSE = "sse"                  # Server-sent events (~100-500ms)
-    POLLING = "polling"          # Periodic REST calls (configurable interval)
-    WEBHOOK = "webhook"          # Push notifications (event-driven)
-    MICRO_BATCH = "micro_batch"  # Windowed batches (5-30s)
-    BATCH = "batch"              # Historical/bulk imports (hourly/daily)
-    SYNTHETIC = "synthetic"      # Internal generator (for testing)
+# Import shared enums from common to avoid duplication (DRY principle)
+from src.common.models import SourceType, TradeSide
 
 
 class SourceMetadata(BaseModel):
@@ -139,13 +126,6 @@ class RawEvent(BaseModel):
             "received_at": self.received_at.isoformat(),
             "raw_data": self.raw_data,
         }
-
-
-class TradeSide(str, Enum):
-    """Trade direction."""
-
-    BUY = "BUY"
-    SELL = "SELL"
 
 
 class EnrichedTradeEvent(BaseModel):

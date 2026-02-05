@@ -12,7 +12,8 @@ from typing import Any
 from uuid import uuid4
 
 from ingestion.adapters.formats.base import DataAdapter
-from ingestion.domain.models import EnrichedTradeEvent, SourceType, TradeSide
+from ingestion.domain.models import EnrichedTradeEvent
+from src.common.models import SourceType, TradeSide
 
 
 class DexPaprikaAdapter(DataAdapter):
