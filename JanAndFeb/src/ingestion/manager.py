@@ -147,11 +147,15 @@ class IngestionManager:
         Args:
             connector: Data source connector
             pipeline: Processing pipeline
-            adapter: Data format adapter
+            adapter: Optional data format adapter. When provided, transforms raw
+                events from the connector's source-specific format into
+                EnrichedTradeEvent instances before pipeline processing.
+                If None, raw events are passed directly to the pipeline.
         """
         self._logger.info(
             "Starting connector",
             connector=connector.name,
+            adapter=adapter.__class__.__name__ if adapter else None,
         )
 
         try:
@@ -160,25 +164,39 @@ class IngestionManager:
                     break
 
                 try:
-                    # Process through pipeline
-                    event = await pipeline.process(raw_event)
-
-                    if event:
-                        # Publish to Kafka
-                        await self._publisher.publish(event)
-                        self._total_events += 1
-
-                        if self._metrics:
-                            latency = event.calculate_latency_ms() or 0
-                            self._metrics.record_event_ingested(
-                                connector.name,
-                                connector.source_type,
-                                latency,
+                    # Transform through adapter if available
+                    if adapter:
+                        events_to_process = adapter.safe_transform(raw_event)
+                        if not events_to_process:
+                            self._logger.debug(
+                                "Adapter returned no events",
+                                connector=connector.name,
+                                adapter=adapter.__class__.__name__,
                             )
-                            self._metrics.record_event_published(
-                                connector.name,
-                                "kafka",
-                            )
+                            continue
+                    else:
+                        events_to_process = [raw_event]
+
+                    # Process each transformed event through pipeline
+                    for event_data in events_to_process:
+                        event = await pipeline.process(event_data)
+
+                        if event:
+                            # Publish to Kafka
+                            await self._publisher.publish(event)
+                            self._total_events += 1
+
+                            if self._metrics:
+                                latency = event.calculate_latency_ms() or 0
+                                self._metrics.record_event_ingested(
+                                    connector.name,
+                                    connector.source_type,
+                                    latency,
+                                )
+                                self._metrics.record_event_published(
+                                    connector.name,
+                                    "kafka",
+                                )
 
                 except Exception as e:
                     self._total_errors += 1
