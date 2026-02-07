@@ -189,6 +189,22 @@ class EnrichedTradeEvent(BaseModel):
         description="Deterministic key for deduplication",
     )
 
+    # DLQ-specific fields (for failed messages)
+    dlq_error_type: str | None = Field(
+        default=None,
+        max_length=100,
+        description="Error type if this is a DLQ message",
+    )
+    dlq_error_message: str | None = Field(
+        default=None,
+        max_length=500,
+        description="Error message if this is a DLQ message",
+    )
+    dlq_original_payload: str | None = Field(
+        default=None,
+        description="Original raw payload as JSON string (for DLQ)",
+    )
+
     @field_validator("price", "volume", mode="before")
     @classmethod
     def convert_to_decimal(cls, v: float | int | str | Decimal) -> Decimal:
@@ -237,6 +253,14 @@ class EnrichedTradeEvent(BaseModel):
         if self.idempotency_key:
             value["idempotency_key"] = self.idempotency_key
 
+        # Add DLQ fields if present
+        if self.dlq_error_type:
+            value["dlq_error_type"] = self.dlq_error_type
+        if self.dlq_error_message:
+            value["dlq_error_message"] = self.dlq_error_message
+        if self.dlq_original_payload:
+            value["dlq_original_payload"] = self.dlq_original_payload
+
         return value
 
     @classmethod
@@ -259,6 +283,9 @@ class EnrichedTradeEvent(BaseModel):
                 data.get("processing_timestamp", datetime.now(UTC).isoformat())
             ),
             idempotency_key=data.get("idempotency_key"),
+            dlq_error_type=data.get("dlq_error_type"),
+            dlq_error_message=data.get("dlq_error_message"),
+            dlq_original_payload=data.get("dlq_original_payload"),
         )
 
     def compute_idempotency_key(self) -> str:

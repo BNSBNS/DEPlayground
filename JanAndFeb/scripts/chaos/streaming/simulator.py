@@ -19,6 +19,7 @@ from scripts.chaos.streaming.issues import (
     HighVolumeIssue,
     EncodingIssue,
     NullFieldIssue,
+    OversizedMessageIssue,
     STREAMING_ISSUES,
 )
 from scripts.chaos.utils.kafka_helper import KafkaHelper
@@ -48,6 +49,7 @@ class SimulationConfig:
     high_volume_burst: int = 100
     encoding_issues: int = 3
     null_fields: int = 3
+    oversized_messages: int = 3
 
 
 class StreamingChaosSimulator:
@@ -306,6 +308,26 @@ class StreamingChaosSimulator:
             expected_dlq=count,
         )
 
+    def test_oversized_messages(self, count: int | None = None) -> TestCase:
+        """Test oversized message handling.
+
+        Oversized messages exceed Kafka's 1MB default limit.
+        Expected: Producer rejects or messages go to DLQ.
+
+        Tests three variants:
+        - batch_array: 5000 trades as single message (~1.5MB)
+        - large_payload: Single trade with huge metadata
+        - nested_depth: Deeply nested JSON (500 levels)
+        """
+        count = count or self.config.oversized_messages
+        issue = OversizedMessageIssue(variant="random")
+        return self._run_issue_test(
+            name="Oversized Messages (>1MB)",
+            issue=issue,
+            count=count,
+            expected_dlq=count,
+        )
+
     def run_all_tests(self) -> ChaosReport:
         """Run all streaming chaos tests.
 
@@ -326,6 +348,7 @@ class StreamingChaosSimulator:
             self.test_schema_violations,
             self.test_null_fields,
             self.test_encoding_issues,
+            self.test_oversized_messages,
             self.test_duplicates,
             self.test_late_events,
             self.test_out_of_order,

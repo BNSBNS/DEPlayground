@@ -84,19 +84,20 @@ class TradeConsumer:
             commit_retry_delay=0.5,
         )
 
-        # Initialize backpressure controller
-        self._backpressure = BackpressureController(
-            self._consumer,
-            high_watermark=1000,
-            low_watermark=100,
-        )
-
         # Initialize aggregator with offset tracking
         self._aggregator = WindowedAggregator(
             window_duration_seconds=self._consumer_settings.window_duration_seconds,
             late_event_grace_seconds=self._consumer_settings.late_event_grace_seconds,
             max_windows=1000,
             max_memory_mb=256,
+        )
+
+        # Initialize backpressure controller with memory coordination
+        self._backpressure = BackpressureController(
+            self._consumer,
+            high_watermark=1000,
+            low_watermark=100,
+            memory_check_fn=self._check_aggregator_memory,
         )
 
         # Initialize DB writer and DLQ handler
@@ -133,6 +134,16 @@ class TradeConsumer:
             kafka_settings=settings.kafka,
             consumer_settings=settings.consumer,
         )
+
+    def _check_aggregator_memory(self) -> tuple[int, int]:
+        """Get aggregator memory state for backpressure coordination.
+
+        Returns:
+            Tuple of (current_memory_bytes, max_memory_bytes)
+        """
+        current = self._aggregator.get_estimated_memory_usage()
+        maximum = self._aggregator.max_memory_bytes
+        return (current, maximum)
 
     def _parse_message(self, msg: Message) -> TradeEvent:
         """Parse and validate a Kafka message into a TradeEvent.

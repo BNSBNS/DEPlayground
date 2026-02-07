@@ -247,6 +247,7 @@ class WindowedAggregator:
         Returns:
             List of completed windows with offset information.
             Usually empty, but may contain multiple if processing lag.
+            Includes both naturally completed windows and evicted windows.
         """
         window_start = self._get_window_start(trade.event_timestamp)
         key = (trade.symbol, window_start)
@@ -256,6 +257,9 @@ class WindowedAggregator:
             current = self._partition_offsets.get(partition, -1)
             if offset > current:
                 self._partition_offsets[partition] = offset
+
+        # Evicted windows to return (if any)
+        evicted_results: list[WindowFlushResult] = []
 
         # Create window state if not exists
         if key not in self._windows:
@@ -268,9 +272,11 @@ class WindowedAggregator:
 
             # Evict oldest windows if we exceed max_windows limit
             if len(self._windows) > self.max_windows:
-                evicted = self._evict_oldest_windows()
-                # Note: evicted windows should still be written to DB
-                # The consumer should handle this
+                evicted_results = self._evict_oldest_windows()
+                logger.info(
+                    "Evicted windows will be written to database",
+                    evicted_count=len(evicted_results),
+                )
 
         # Add trade to window with offset tracking
         self._windows[key].add_trade(trade, partition, offset)
@@ -283,7 +289,10 @@ class WindowedAggregator:
             self._latest_event_time = trade.event_timestamp
 
         # Check for completed windows
-        return self._flush_completed_windows()
+        completed_results = self._flush_completed_windows()
+
+        # Return both completed and evicted windows
+        return evicted_results + completed_results
 
     def _flush_completed_windows(self) -> list[WindowFlushResult]:
         """Flush windows that have passed the grace period.

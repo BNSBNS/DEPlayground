@@ -240,17 +240,33 @@ class IngestionManager:
         error: Exception,
         source: str,
     ) -> None:
-        """Send failed event to dead letter queue."""
+        """Send failed event to dead letter queue.
+
+        Preserves the original event payload and error context for debugging
+        and potential replay.
+        """
         try:
             from ingestion.domain.models import SourceMetadata, SourceType
             import json
 
-            # Create a minimal DLQ event
+            # Extract symbol from raw_event if possible, otherwise use "UNKNOWN"
+            symbol = "UNKNOWN"
+            if isinstance(raw_event, dict):
+                symbol = raw_event.get("symbol", raw_event.get("s", "UNKNOWN"))
+
+            # Serialize raw_event to JSON for preservation
+            try:
+                raw_payload_json = json.dumps(raw_event) if raw_event else None
+            except (TypeError, ValueError):
+                # If can't serialize, store string representation
+                raw_payload_json = str(raw_event) if raw_event else None
+
+            # Create DLQ event with preserved context
             dlq_event = EnrichedTradeEvent(
-                symbol="DLQ_ERROR",
-                price=0,
-                volume=1,
-                side="BUY",
+                symbol=f"DLQ_{symbol}",  # Prefix to distinguish DLQ messages
+                price=0,  # Dummy value (required field)
+                volume=1,  # Dummy value (required field)
+                side="BUY",  # Dummy value (required field)
                 trader_id=source,
                 event_timestamp=datetime.now(UTC),
                 source_metadata=SourceMetadata(
@@ -259,9 +275,20 @@ class IngestionManager:
                     ingestion_timestamp=datetime.now(UTC),
                     expected_latency_ms=0,
                 ),
+                # DLQ-specific fields with original context
+                dlq_error_type=type(error).__name__,
+                dlq_error_message=str(error)[:500],  # Truncate to field limit
+                dlq_original_payload=raw_payload_json,
             )
 
             await self._dlq_publisher.publish(dlq_event)
+
+            self._logger.info(
+                "Sent failed event to DLQ",
+                source=source,
+                error_type=type(error).__name__,
+                original_symbol=symbol,
+            )
 
         except Exception as dlq_error:
             self._logger.error(

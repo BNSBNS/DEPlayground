@@ -217,16 +217,44 @@ class DeliveryCallbackMixin:
         pass
 
 
-def serialize_message(data: dict[str, Any]) -> bytes:
-    """Serialize a message to JSON bytes.
+class MessageTooLargeError(Exception):
+    """Raised when a serialized message exceeds Kafka's size limit."""
+
+    def __init__(self, size_bytes: int, max_bytes: int):
+        self.size_bytes = size_bytes
+        self.max_bytes = max_bytes
+        super().__init__(
+            f"Message size {size_bytes} bytes exceeds limit of {max_bytes} bytes"
+        )
+
+
+# Kafka default message.max.bytes (broker-side limit)
+DEFAULT_MAX_MESSAGE_BYTES = 1_048_576  # 1MB
+
+
+def serialize_message(
+    data: dict[str, Any],
+    max_bytes: int = DEFAULT_MAX_MESSAGE_BYTES,
+) -> bytes:
+    """Serialize a message to JSON bytes with size validation.
+
+    Validates message size before returning to catch oversized messages
+    at the producer boundary rather than letting Kafka reject them.
 
     Args:
         data: Dictionary to serialize.
+        max_bytes: Maximum allowed message size. Defaults to 1MB (Kafka default).
 
     Returns:
         UTF-8 encoded JSON bytes.
+
+    Raises:
+        MessageTooLargeError: If serialized message exceeds max_bytes.
     """
-    return json.dumps(data, default=str).encode("utf-8")
+    serialized = json.dumps(data, default=str).encode("utf-8")
+    if len(serialized) > max_bytes:
+        raise MessageTooLargeError(len(serialized), max_bytes)
+    return serialized
 
 
 def deserialize_message(data: bytes) -> dict[str, Any]:

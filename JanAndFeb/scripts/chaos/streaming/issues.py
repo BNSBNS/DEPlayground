@@ -623,6 +623,113 @@ class NullFieldIssue(StreamingIssue):
         )
 
 
+class OversizedMessageIssue(StreamingIssue):
+    """Generate messages that exceed Kafka's message size limit.
+
+    Common causes in production:
+    - Batch of events accidentally serialized as single message
+    - Large nested payloads (order books, market snapshots)
+    - Base64-encoded attachments (regulatory documents)
+    - Unbounded array fields (historical price series)
+
+    Kafka default limit: 1MB (message.max.bytes)
+
+    Expected handling:
+    - Producer should reject before sending (MessageSizeTooLarge)
+    - If size validation exists in pipeline, route to DLQ
+    - If no validation, Kafka broker rejects the produce request
+
+    Industry solutions:
+    - Claim Check Pattern: store in external storage, send reference
+    - Chunking: split into sequenced smaller messages
+    - Schema optimization: use Avro/Protobuf instead of JSON
+    - Size validation: reject at producer before hitting Kafka
+    """
+
+    name = "oversized_message"
+    description = "Message exceeding Kafka size limit"
+    expected_error = "MessageSizeTooLarge or KafkaException"
+    should_dlq = True
+
+    # Kafka default limit
+    DEFAULT_MAX_BYTES = 1_048_576  # 1MB
+
+    def __init__(self, variant: str = "random", target_size_bytes: int = 0):
+        """Initialize oversized message generator.
+
+        Args:
+            variant: Type of oversized message
+                - "batch_array": Array of trades in single message
+                - "large_payload": Single trade with huge metadata field
+                - "nested_depth": Deeply nested JSON structure
+                - "random": Random variant
+            target_size_bytes: Target message size. 0 = 1.5x Kafka limit.
+        """
+        self.variant = variant
+        self._variants = ["batch_array", "large_payload", "nested_depth"]
+        self.target_size = target_size_bytes or int(self.DEFAULT_MAX_BYTES * 1.5)
+
+    def _base_trade(self) -> dict[str, Any]:
+        """Create a valid base trade."""
+        return {
+            "trade_id": str(uuid4()),
+            "symbol": "OVERSIZE_TEST",
+            "price": "100.50",
+            "volume": "10.0",
+            "side": "BUY",
+            "trader_id": "CHAOS_TEST",
+            "event_timestamp": datetime.now(UTC).isoformat(),
+        }
+
+    def generate(self) -> IssueResult:
+        variant = self.variant
+        if variant == "random":
+            variant = random.choice(self._variants)
+
+        if variant == "batch_array":
+            # Anti-pattern: batch of trades as single message
+            trades = [self._base_trade() for _ in range(5000)]
+            payload = {"batch": trades, "batch_size": len(trades)}
+            message = json.dumps(payload).encode("utf-8")
+            desc = f"Batch array ({len(trades)} trades = {len(message)} bytes)"
+
+        elif variant == "large_payload":
+            # Single trade with oversized metadata
+            trade = self._base_trade()
+            # Pad with random data to exceed limit
+            padding_size = self.target_size - len(json.dumps(trade).encode())
+            trade["metadata"] = {
+                "market_snapshot": "X" * max(0, padding_size),
+            }
+            message = json.dumps(trade).encode("utf-8")
+            desc = f"Large payload ({len(message)} bytes, metadata padding)"
+
+        else:  # nested_depth
+            # Deeply nested structure that expands when serialized
+            trade = self._base_trade()
+            nested: dict[str, Any] = {"level": 0, "data": "X" * 1000}
+            for i in range(1, 500):
+                nested = {"level": i, "child": nested, "data": "X" * 1000}
+            trade["nested"] = nested
+            message = json.dumps(trade).encode("utf-8")
+            desc = f"Deeply nested JSON ({len(message)} bytes, 500 levels)"
+
+        return IssueResult(
+            issue_type=self.name,
+            message_bytes=message,
+            message_key=b"OVERSIZE_TEST",
+            expected_error=self.expected_error,
+            description=desc,
+            should_dlq=True,
+            metadata={
+                "variant": variant,
+                "size_bytes": len(message),
+                "kafka_limit": self.DEFAULT_MAX_BYTES,
+                "exceeds_by": len(message) - self.DEFAULT_MAX_BYTES,
+            },
+        )
+
+
 # =============================================================================
 # Factory Pattern: Registry + Factory Function
 # =============================================================================
@@ -636,6 +743,7 @@ STREAMING_ISSUES: dict[str, type[StreamingIssue]] = {
     "high_volume": HighVolumeIssue,
     "encoding_issue": EncodingIssue,
     "null_field": NullFieldIssue,
+    "oversized_message": OversizedMessageIssue,
 }
 
 

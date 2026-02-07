@@ -89,6 +89,7 @@ class BackpressureController:
         max_in_flight: int = 5000,
         pause_on_memory_mb: int = 500,
         check_interval_seconds: float = 1.0,
+        memory_check_fn: Callable[[], tuple[int, int]] | None = None,
     ):
         """Initialize the backpressure controller.
 
@@ -99,13 +100,17 @@ class BackpressureController:
             max_in_flight: Maximum messages being processed
             pause_on_memory_mb: Pause if memory exceeds this (MB)
             check_interval_seconds: How often to check conditions
+            memory_check_fn: Optional callback that returns (current_memory_bytes, max_memory_bytes)
+                           Used to coordinate with aggregator state memory
         """
         self._consumer = consumer
         self._high_watermark = high_watermark
         self._low_watermark = low_watermark
         self._max_in_flight = max_in_flight
         self._pause_on_memory_mb = pause_on_memory_mb
+        self._pause_on_memory_bytes = pause_on_memory_mb * 1024 * 1024
         self._check_interval = check_interval_seconds
+        self._memory_check_fn = memory_check_fn
 
         # State tracking
         self._state = FlowState.FLOWING
@@ -117,6 +122,7 @@ class BackpressureController:
         self._resume_count = 0
         self._throttle_count = 0
         self._last_state_change = datetime.now(UTC)
+        self._memory_pause_count = 0
 
         # Throughput tracking
         self._message_times: deque[float] = deque(maxlen=1000)
@@ -163,23 +169,48 @@ class BackpressureController:
             self._check_backpressure()
 
     def _check_backpressure(self) -> None:
-        """Check conditions and apply/release backpressure."""
+        """Check conditions and apply/release backpressure.
+
+        Checks both message count and memory usage (if callback provided).
+        This prevents memory exhaustion from unbounded aggregator state.
+        """
         # Calculate current throughput
         self._update_throughput()
 
-        # Check if we should pause
-        if self._in_flight_count >= self._high_watermark:
+        # Check memory state if callback provided
+        memory_pressure = False
+        if self._memory_check_fn:
+            try:
+                current_memory, max_memory = self._memory_check_fn()
+                # Trigger backpressure at 80% of max memory
+                memory_threshold = max_memory * 0.8
+                if current_memory >= memory_threshold:
+                    memory_pressure = True
+                    if self._state != FlowState.PAUSED:
+                        logger.warning(
+                            "Memory pressure detected",
+                            current_mb=current_memory / (1024 * 1024),
+                            threshold_mb=memory_threshold / (1024 * 1024),
+                            max_mb=max_memory / (1024 * 1024),
+                        )
+            except Exception as e:
+                logger.warning("Failed to check memory state", error=str(e))
+
+        # Check if we should pause (message count OR memory pressure)
+        if self._in_flight_count >= self._high_watermark or memory_pressure:
             if self._state != FlowState.PAUSED:
+                if memory_pressure:
+                    self._memory_pause_count += 1
                 self._pause()
-        # Check if we should resume
-        elif self._in_flight_count <= self._low_watermark:
+        # Check if we should resume (both conditions must be clear)
+        elif self._in_flight_count <= self._low_watermark and not memory_pressure:
             if self._state == FlowState.PAUSED:
                 self._resume()
         # Check for throttling
         elif self._in_flight_count > self._low_watermark * 2:
             if self._state == FlowState.FLOWING:
                 self._throttle()
-        elif self._state == FlowState.THROTTLED:
+        elif self._state == FlowState.THROTTLED and not memory_pressure:
             self._state = FlowState.FLOWING
             self._last_state_change = datetime.now(UTC)
 
@@ -336,6 +367,7 @@ class BackpressureController:
             "pause_count": self._pause_count,
             "resume_count": self._resume_count,
             "throttle_count": self._throttle_count,
+            "memory_pause_count": self._memory_pause_count,
             "throughput_per_sec": self._current_throughput,
             "paused_partitions": len(self._paused_partitions),
         }
