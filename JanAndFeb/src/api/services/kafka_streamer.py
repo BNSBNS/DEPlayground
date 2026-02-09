@@ -5,8 +5,8 @@ Consumes from Kafka trades topic and broadcasts to connected WebSocket clients.
 
 import asyncio
 import json
+import time
 from datetime import datetime, timezone
-from decimal import Decimal
 from typing import Any
 
 from confluent_kafka import Consumer, KafkaError
@@ -43,6 +43,7 @@ class KafkaStreamer:
 
         # Windowed aggregator for computing real-time aggregates
         self._aggregator = WindowedAggregator(window_duration_seconds=60)
+        self._last_idle_flush: float = 0.0
 
         # Consumer instance (created on start)
         self._consumer: Consumer | None = None
@@ -132,11 +133,19 @@ class KafkaStreamer:
 
         try:
             while self._running:
-                # Poll Kafka (non-blocking to allow async)
-                msg = self._consumer.poll(timeout=0.1)
+                # Offload the blocking poll to a thread so the event loop
+                # stays free. 100 ms timeout gives a natural cadence without
+                # busy-waiting.
+                msg = await asyncio.to_thread(self._consumer.poll, 0.1)
+
+                # Periodic idle flush: emit windows that closed while traffic
+                # was quiet (wall-clock based, same pattern as the consumer).
+                now = time.monotonic()
+                if now - self._last_idle_flush >= 5.0:
+                    await self._flush_stale_aggregates()
+                    self._last_idle_flush = now
 
                 if msg is None:
-                    await asyncio.sleep(0.01)  # Yield to event loop
                     continue
 
                 if msg.error():
@@ -169,6 +178,8 @@ class KafkaStreamer:
             logger.error("Kafka streamer error", error=str(e))
         finally:
             self._connected = False
+            # Final flush so in-progress windows reach subscribers on shutdown
+            await self._flush_all_aggregates()
             if self._consumer:
                 self._consumer.close()
 
@@ -176,6 +187,39 @@ class KafkaStreamer:
         """Stop the Kafka consumer."""
         self._running = False
         logger.info("Kafka streamer stopping")
+
+    async def _flush_stale_aggregates(self) -> None:
+        """Flush windows that closed while traffic was quiet."""
+        results = self._aggregator.flush_stale_windows(
+            reference_time=datetime.now(timezone.utc),
+        )
+        await self._broadcast_aggregate_results(results)
+
+    async def _flush_all_aggregates(self) -> None:
+        """Flush all remaining windows on shutdown."""
+        results = self._aggregator.flush_all()
+        await self._broadcast_aggregate_results(results)
+
+    async def _broadcast_aggregate_results(self, results: list) -> None:
+        """Broadcast a list of WindowFlushResult to aggregate subscribers."""
+        for result in results:
+            agg = result.aggregate
+            agg_data = {
+                "type": "aggregate",
+                "symbol": agg.symbol,
+                "window_start": agg.window_start.isoformat(),
+                "window_end": agg.window_end.isoformat(),
+                "vwap": str(agg.vwap),
+                "total_volume": str(agg.total_volume),
+                "trade_count": agg.trade_count,
+                "max_price": str(agg.max_price),
+                "min_price": str(agg.min_price),
+            }
+            for queue in self._aggregate_subscribers.values():
+                try:
+                    queue.put_nowait(agg_data)
+                except asyncio.QueueFull:
+                    pass
 
     async def _broadcast_trade(self, data: dict[str, Any]) -> None:
         """Broadcast a trade event to all subscribed clients."""
@@ -198,31 +242,8 @@ class KafkaStreamer:
     async def _process_for_aggregates(self, data: dict[str, Any]) -> None:
         """Process trade through aggregator and broadcast completed windows."""
         try:
-            # Convert to TradeEvent
             trade = TradeEvent.from_kafka_value(data)
-
-            # Add to aggregator (returns completed windows)
             completed = self._aggregator.add_trade(trade)
-
-            # Broadcast completed aggregates
-            for aggregate in completed:
-                agg_data = {
-                    "type": "aggregate",
-                    "symbol": aggregate.symbol,
-                    "window_start": aggregate.window_start.isoformat(),
-                    "window_end": aggregate.window_end.isoformat(),
-                    "vwap": str(aggregate.vwap),
-                    "total_volume": str(aggregate.total_volume),
-                    "trade_count": aggregate.trade_count,
-                    "max_price": str(aggregate.max_price),
-                    "min_price": str(aggregate.min_price),
-                }
-
-                for queue in self._aggregate_subscribers.values():
-                    try:
-                        queue.put_nowait(agg_data)
-                    except asyncio.QueueFull:
-                        pass
-
+            await self._broadcast_aggregate_results(completed)
         except Exception as e:
             logger.debug("Could not process trade for aggregates", error=str(e))

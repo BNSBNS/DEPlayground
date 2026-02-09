@@ -154,12 +154,8 @@ class ChaosReport:
         print("SUMMARY")
         print("-" * 70)
 
-        status_icon = "✅" if self.failed_tests == 0 else "❌"
-        print(f"\n{status_icon} Total: {self.total_tests} | "
-              f"Passed: {self.passed_tests} | "
-              f"Failed: {self.failed_tests} | "
-              f"Errors: {self.error_tests} | "
-              f"Skipped: {self.skipped_tests}")
+
+
         print(f"   Pass Rate: {self.pass_rate:.1f}%")
 
         # Group by category
@@ -214,7 +210,7 @@ class ChaosReport:
 
         for i, test in enumerate(self.tests, 1):
             icon = {
-                TestStatus.PASSED: "✅",
+                TestStatus.PASSED: "",
                 TestStatus.FAILED: "❌",
                 TestStatus.ERROR: "⚠️",
                 TestStatus.SKIPPED: "⏭️",
@@ -297,7 +293,7 @@ class ChaosReport:
 
             for test in self.get_by_category(category):
                 status_icon = {
-                    TestStatus.PASSED: "✅",
+                    TestStatus.PASSED: "",
                     TestStatus.FAILED: "❌",
                     TestStatus.ERROR: "⚠️",
                     TestStatus.SKIPPED: "⏭️",

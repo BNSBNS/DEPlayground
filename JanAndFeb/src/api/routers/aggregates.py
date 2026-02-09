@@ -1,8 +1,11 @@
 """REST endpoints for trade aggregates.
 
 Reads from PostgreSQL trade_aggregates table.
+All database calls are offloaded via asyncio.to_thread so the event loop
+is never blocked by synchronous psycopg I/O.
 """
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Annotated
@@ -63,52 +66,34 @@ async def get_aggregates(
         offset: Number of results to skip for pagination
     """
     db = request.app.state.db_writer
-
-    # Build query
     since = datetime.now(timezone.utc) - timedelta(hours=hours)
 
-    with db._get_connection() as conn:
-        with conn.cursor() as cur:
-            # Count total
-            count_sql = """
-                SELECT COUNT(*) as total
-                FROM trade_aggregates
-                WHERE window_start >= %(since)s
-            """
-            params: dict[str, str | datetime | int] = {"since": since}
+    count_sql = "SELECT COUNT(*) as total FROM trade_aggregates WHERE window_start >= %(since)s"
+    params: dict[str, str | datetime | int] = {"since": since}
 
-            if symbol:
-                count_sql += " AND symbol = %(symbol)s"
-                params["symbol"] = symbol
+    if symbol:
+        count_sql += " AND symbol = %(symbol)s"
+        params["symbol"] = symbol
 
-            cur.execute(count_sql, params)
-            total = cur.fetchone()["total"]
+    data_sql = """
+        SELECT symbol, window_start, window_end, vwap, total_volume,
+               trade_count, max_price, min_price
+        FROM trade_aggregates
+        WHERE window_start >= %(since)s
+    """
+    if symbol:
+        data_sql += " AND symbol = %(symbol)s"
+    data_sql += " ORDER BY window_start DESC LIMIT %(limit)s OFFSET %(offset)s"
 
-            # Get data
-            data_sql = """
-                SELECT symbol, window_start, window_end, vwap, total_volume,
-                       trade_count, max_price, min_price
-                FROM trade_aggregates
-                WHERE window_start >= %(since)s
-            """
+    params["limit"] = limit
+    params["offset"] = offset
 
-            if symbol:
-                data_sql += " AND symbol = %(symbol)s"
-
-            data_sql += """
-                ORDER BY window_start DESC
-                LIMIT %(limit)s OFFSET %(offset)s
-            """
-            params["limit"] = limit
-            params["offset"] = offset
-
-            cur.execute(data_sql, params)
-            rows = cur.fetchall()
-
-    aggregates = [AggregateResponse(**row) for row in rows]
+    count_rows = await asyncio.to_thread(db.query_all, count_sql, params)
+    total = count_rows[0]["total"]
+    rows = await asyncio.to_thread(db.query_all, data_sql, params)
 
     return PaginatedResponse(
-        data=aggregates,
+        data=[AggregateResponse(**row) for row in rows],
         total=total,
         limit=limit,
         offset=offset,
@@ -126,21 +111,18 @@ async def get_aggregates_by_symbol(
     db = request.app.state.db_writer
     since = datetime.now(timezone.utc) - timedelta(hours=hours)
 
-    with db._get_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT symbol, window_start, window_end, vwap, total_volume,
-                       trade_count, max_price, min_price
-                FROM trade_aggregates
-                WHERE symbol = %(symbol)s AND window_start >= %(since)s
-                ORDER BY window_start DESC
-                LIMIT %(limit)s
-                """,
-                {"symbol": symbol, "since": since, "limit": limit},
-            )
-            rows = cur.fetchall()
-
+    rows = await asyncio.to_thread(
+        db.query_all,
+        """
+        SELECT symbol, window_start, window_end, vwap, total_volume,
+               trade_count, max_price, min_price
+        FROM trade_aggregates
+        WHERE symbol = %(symbol)s AND window_start >= %(since)s
+        ORDER BY window_start DESC
+        LIMIT %(limit)s
+        """,
+        {"symbol": symbol, "since": since, "limit": limit},
+    )
     return [AggregateResponse(**row) for row in rows]
 
 
@@ -158,27 +140,24 @@ async def get_vwap(
     since = datetime.now(timezone.utc) - timedelta(hours=hours)
     now = datetime.now(timezone.utc)
 
-    with db._get_connection() as conn:
-        with conn.cursor() as cur:
-            sql = """
-                SELECT
-                    symbol,
-                    SUM(vwap * total_volume) / NULLIF(SUM(total_volume), 0) as vwap,
-                    SUM(total_volume) as total_volume,
-                    SUM(trade_count) as trade_count
-                FROM trade_aggregates
-                WHERE window_start >= %(since)s
-            """
-            params: dict[str, str | datetime] = {"since": since}
+    sql = """
+        SELECT
+            symbol,
+            SUM(vwap * total_volume) / NULLIF(SUM(total_volume), 0) as vwap,
+            SUM(total_volume) as total_volume,
+            SUM(trade_count) as trade_count
+        FROM trade_aggregates
+        WHERE window_start >= %(since)s
+    """
+    params: dict[str, str | datetime] = {"since": since}
 
-            if symbol:
-                sql += " AND symbol = %(symbol)s"
-                params["symbol"] = symbol
+    if symbol:
+        sql += " AND symbol = %(symbol)s"
+        params["symbol"] = symbol
 
-            sql += " GROUP BY symbol ORDER BY symbol"
+    sql += " GROUP BY symbol ORDER BY symbol"
 
-            cur.execute(sql, params)
-            rows = cur.fetchall()
+    rows = await asyncio.to_thread(db.query_all, sql, params)
 
     return [
         VWAPResponse(
@@ -199,17 +178,14 @@ async def get_symbols(request: Request) -> list[str]:
     db = request.app.state.db_writer
     since = datetime.now(timezone.utc) - timedelta(hours=24)
 
-    with db._get_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT DISTINCT symbol
-                FROM trade_aggregates
-                WHERE window_start >= %(since)s
-                ORDER BY symbol
-                """,
-                {"since": since},
-            )
-            rows = cur.fetchall()
-
+    rows = await asyncio.to_thread(
+        db.query_all,
+        """
+        SELECT DISTINCT symbol
+        FROM trade_aggregates
+        WHERE window_start >= %(since)s
+        ORDER BY symbol
+        """,
+        {"since": since},
+    )
     return [row["symbol"] for row in rows]

@@ -1,6 +1,6 @@
 """Pytest configuration and shared fixtures."""
 
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from uuid import uuid4
 
@@ -34,14 +34,14 @@ def sample_trade() -> TradeEvent:
         volume=Decimal("100.00"),
         side=TradeSide.BUY,
         trader_id="TRADER_001",
-        event_timestamp=datetime.now(UTC),
+        event_timestamp=datetime.now(timezone.utc),
     )
 
 
 @pytest.fixture
 def sample_trades() -> list[TradeEvent]:
     """Create multiple sample trade events."""
-    base_time = datetime(2026, 1, 17, 10, 0, 0, tzinfo=UTC)
+    base_time = datetime(2026, 1, 17, 10, 0, 0, tzinfo=timezone.utc)
     trades = []
 
     for i in range(10):
@@ -63,7 +63,7 @@ def sample_trades() -> list[TradeEvent]:
 @pytest.fixture
 def sample_aggregate() -> TradeAggregate:
     """Create a sample trade aggregate for testing."""
-    window_start = datetime(2026, 1, 17, 10, 0, 0, tzinfo=UTC)
+    window_start = datetime(2026, 1, 17, 10, 0, 0, tzinfo=timezone.utc)
     return TradeAggregate(
         symbol="POWER_DE",
         window_start=window_start,
@@ -80,7 +80,7 @@ def sample_aggregate() -> TradeAggregate:
 @pytest.fixture
 def multiple_symbol_trades() -> list[TradeEvent]:
     """Create trades for multiple symbols."""
-    base_time = datetime(2026, 1, 17, 10, 0, 0, tzinfo=UTC)
+    base_time = datetime(2026, 1, 17, 10, 0, 0, tzinfo=timezone.utc)
     symbols = ["POWER_DE", "POWER_FR", "GAS_NL"]
     trades = []
 

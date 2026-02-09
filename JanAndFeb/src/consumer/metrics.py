@@ -57,6 +57,17 @@ window_evictions = Counter(
     "Total windows evicted due to memory limits",
 )
 
+idle_flushes_total = Counter(
+    "idle_flushes_total",
+    "Total idle flush cycles executed",
+)
+
+idle_flush_windows_count = Histogram(
+    "idle_flush_windows_count",
+    "Number of windows flushed per idle flush cycle",
+    buckets=(0, 1, 5, 10, 25, 50, 100, 250, 500),
+)
+
 # =============================================================================
 # Latency Metrics
 # =============================================================================
@@ -195,6 +206,27 @@ aggregator_memory_bytes = Gauge(
 aggregator_memory_limit_bytes = Gauge(
     "aggregator_memory_limit_bytes",
     "Maximum allowed memory for the aggregator in bytes",
+)
+
+# =============================================================================
+# Database Metrics (Fix #1, #7)
+# =============================================================================
+
+db_write_retries_total = Counter(
+    "db_write_retries_total",
+    "Total database write retry attempts",
+    ["status"],  # success, failure
+)
+
+db_pool_size = Gauge(
+    "db_pool_size",
+    "Number of connections in the database pool",
+    ["state"],  # idle, active
+)
+
+db_pool_failures = Counter(
+    "db_pool_failures_total",
+    "Total connection pool acquisition failures",
 )
 
 # =============================================================================

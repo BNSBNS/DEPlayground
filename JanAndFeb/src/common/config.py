@@ -53,6 +53,20 @@ class KafkaSettings(BaseSettings):
         description="Consumer group ID for the streaming consumer",
     )
 
+    # Topic durability settings
+    replication_factor: int = Field(
+        default=1,
+        ge=1,
+        le=9,
+        description="Replication factor for topic creation. Use 3+ in production.",
+    )
+    min_insync_replicas: int = Field(
+        default=1,
+        ge=1,
+        le=9,
+        description="min.insync.replicas for topic creation. Use 2+ in production.",
+    )
+
     # Producer settings (hardcoded for trading durability requirements)
     # These are documented here but set in kafka_utils.py
     # acks: all (wait for all replicas)
@@ -85,6 +99,48 @@ class PostgresSettings(BaseSettings):
     dsn: str | None = Field(
         default=None,
         description="Full PostgreSQL connection string (overrides individual settings)",
+    )
+
+    # Connection pool settings (Fix #7)
+    pool_min: int = Field(
+        default=2,
+        ge=1,
+        le=20,
+        description="Minimum connections in pool",
+    )
+    pool_max: int = Field(
+        default=5,
+        ge=1,
+        le=50,
+        description="Maximum connections in pool",
+    )
+    pool_recycle: int = Field(
+        default=1800,
+        ge=300,
+        le=7200,
+        description="Recycle connections after N seconds (avoid stale sockets)",
+    )
+    pool_pre_ping: bool = Field(
+        default=True,
+        description="Health check connections before use",
+    )
+    pool_timeout: int = Field(
+        default=10,
+        ge=1,
+        le=60,
+        description="Timeout waiting for connection from pool (seconds)",
+    )
+
+    # Retry settings (Fix #1)
+    retry_max: int = Field(
+        default=3,
+        ge=1,
+        le=10,
+        description="Maximum retry attempts for DB operations",
+    )
+    retry_backoff: list[int] = Field(
+        default=[1, 2, 4],
+        description="Backoff delays in seconds for each retry attempt",
     )
 
     def get_dsn(self) -> str:
@@ -146,6 +202,44 @@ class ProducerSettings(BaseSettings):
         description="Time between bursts in seconds",
     )
 
+    # Retry settings (Fix #2, #8)
+    buffer_retry_max: int = Field(
+        default=5,
+        ge=1,
+        le=10,
+        description="Maximum retry attempts for BufferError",
+    )
+    buffer_retry_backoff_base: int = Field(
+        default=1,
+        ge=1,
+        le=10,
+        description="Base backoff delay in seconds for BufferError retry",
+    )
+    buffer_retry_backoff_max: int = Field(
+        default=10,
+        ge=1,
+        le=60,
+        description="Maximum backoff delay in seconds",
+    )
+    buffer_retry_jitter: float = Field(
+        default=0.5,
+        ge=0.0,
+        le=1.0,
+        description="Jitter factor (0-1) for backoff randomization",
+    )
+    kafka_produce_max_retries: int = Field(
+        default=3,
+        ge=1,
+        le=10,
+        description="Maximum retry attempts for Kafka produce errors",
+    )
+    parking_queue_max_size: int = Field(
+        default=1000,
+        ge=10,
+        le=100000,
+        description="Maximum size of parking queue for failed messages",
+    )
+
 
 class ConsumerSettings(BaseSettings):
     """Streaming consumer configuration."""
@@ -172,6 +266,28 @@ class ConsumerSettings(BaseSettings):
         ge=1,
         le=10000,
         description="Maximum batch size for database writes",
+    )
+
+    # Idle flush settings
+    idle_flush_interval: int = Field(
+        default=60,
+        ge=10,
+        le=600,
+        description="Interval in seconds for flushing idle windows",
+    )
+    idle_flush_max_batch: int = Field(
+        default=100,
+        ge=1,
+        le=1000,
+        description="Maximum windows to flush per idle flush cycle",
+    )
+
+    # Memory estimation
+    empirical_bytes_per_window: int = Field(
+        default=5000,
+        ge=1000,
+        le=100000,
+        description="Empirical memory cost per window (measured with realistic workload)",
     )
 
 

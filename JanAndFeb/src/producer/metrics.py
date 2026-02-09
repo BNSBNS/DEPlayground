@@ -35,6 +35,24 @@ produce_duration = Histogram(
     buckets=(0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05, 0.1),
 )
 
+# Retry metrics (Fix #2, #8)
+producer_buffer_full_retries_total = Counter(
+    "producer_buffer_full_retries_total",
+    "Total producer buffer full retry attempts",
+    ["status"],  # success, failure
+)
+
+kafka_produce_retries_total = Counter(
+    "kafka_produce_retries_total",
+    "Total Kafka produce retry attempts",
+    ["status"],  # success, failure
+)
+
+parking_queue_size = Gauge(
+    "parking_queue_size",
+    "Number of messages in parking queue (failed produces)",
+)
+
 
 def start_metrics_server(port: int = 8002) -> None:
     """Start the Prometheus metrics HTTP server.

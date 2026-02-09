@@ -1,6 +1,7 @@
-# Advanced Architecture Roadmap
+# Future Roadmap
 
-This document outlines advanced features for production readiness that are beyond the current learning platform scope but provide guidance for future enhancement.
+> **Status: NOT IMPLEMENTED** — These are proposed enhancements for future iterations.
+> Current architecture is documented in [architecture-diagrams.md](../architecture-diagrams.md) and [README.md](../README.md).
 
 ## 1. Persistent Window State
 

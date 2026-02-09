@@ -312,17 +312,3 @@ class OffsetManager:
             },
         }
 
-    def get_safe_restart_offsets(self) -> dict[int, int]:
-        """Get the safe restart offsets for all partitions.
-
-        Returns the last committed offset per partition, which is the safe
-        point to resume from after a restart.
-
-        Returns:
-            Dict mapping partition -> last committed offset
-        """
-        return {
-            p: state.last_committed_offset
-            for p, state in self._partitions.items()
-            if state.last_committed_offset >= 0
-        }

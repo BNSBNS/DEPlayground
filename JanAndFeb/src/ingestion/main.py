@@ -19,27 +19,21 @@ Environment Variables:
     MICROBATCH_ENABLED=true   Enable Micro-batch connector
     BATCH_ENABLED=true        Enable Batch file processor
 
-    See common/config.py for full configuration options.
+    See src/common/config.py for full configuration options.
 """
 
 import asyncio
 import signal
 import sys
-from pathlib import Path
 
 import structlog
 
-# Add src to path for imports
-src_path = Path(__file__).parent.parent
-if str(src_path) not in sys.path:
-    sys.path.insert(0, str(src_path))
-
-from common.config import get_settings, IngestionMode
-from common.logging_config import configure_logging
-from ingestion.manager import IngestionManager
-from ingestion.factories import ConnectorFactory, AdapterFactory, ConnectorType
-from ingestion.adapters.publishers import KafkaPublisher
-from ingestion.adapters.infrastructure import PrometheusMetrics
+from src.common.config import get_settings, IngestionMode
+from src.common.logging_config import configure_logging
+from src.ingestion.manager import IngestionManager
+from src.ingestion.factories import ConnectorFactory, AdapterFactory, ConnectorType
+from src.ingestion.adapters.publishers import KafkaPublisher
+from src.ingestion.adapters.infrastructure import PrometheusMetrics
 
 
 logger = structlog.get_logger()

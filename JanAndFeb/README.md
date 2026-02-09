@@ -111,8 +111,14 @@ The platform supports **4 ingestion profiles** via Docker Compose `--profile`:
 │        └─────────────┴──────┬──────┴─────────────┴─────────────┘           │
 │                             ▼                                               │
 │  ┌───────────────────────────────────────────────────────────────────────┐ │
+│  │  ADAPTERS: Transform source-specific format → EnrichedTradeEvent      │ │
+│  │  (Finnhub JSON, DexPaprika SSE, ENTSO-E XML → unified internal model) │ │
+│  └───────────────────────────────────────────────────────────────────────┘ │
+│                             │                                               │
+│                             ▼                                               │
+│  ┌───────────────────────────────────────────────────────────────────────┐ │
 │  │  PROCESSING PIPELINE (Chain of Responsibility)                         │ │
-│  │  [Validate] ──▶ [Deduplicate] ──▶ [Enrich] ──▶ [Transform via Adapter] │ │
+│  │  [Validate] ──▶ [Deduplicate] ──▶ [Enrich]                             │ │
 │  └───────────────────────────────────────────────────────────────────────┘ │
 │                             │                                               │
 │  SECONDARY PORTS            ▼                                               │
@@ -142,6 +148,36 @@ The platform supports **4 ingestion profiles** via Docker Compose `--profile`:
 | BATCH | CSV/Parquet files | Batch | `trades` | Aggregator | `trade_aggregates` |
 | HYBRID | APIs + Files | WS, SSE, Batch | `trades` | Aggregator | `trade_aggregates` |
 
+### Adapter Transformation Flow
+
+Adapters act as translators between source-specific data formats and the internal `EnrichedTradeEvent` model:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  EXAMPLE: Finnhub WebSocket → EnrichedTradeEvent                            │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  RAW (Finnhub format):              TRANSFORMED (Internal model):           │
+│  {                                  EnrichedTradeEvent(                     │
+│    "type": "trade",          ──▶      symbol="STOCK_AAPL",                  │
+│    "data": [{                         price=Decimal("150.25"),              │
+│      "s": "AAPL",                     quantity=Decimal("100"),              │
+│      "p": 150.25,                     event_timestamp=datetime(...),        │
+│      "v": 100,                        source=SourceMetadata(                │
+│      "t": 1706800000000               source_type=WEBSOCKET,                │
+│    }]                                 source_name="finnhub",                │
+│  }                                    expected_latency_ms=100               │
+│                                     )                                       │
+│                                   )                                         │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+The `IngestionManager._run_connector()` method orchestrates this flow:
+1. **Connector** streams raw events from external source
+2. **Adapter** (if provided) transforms raw events → `EnrichedTradeEvent` list
+3. **Pipeline** validates, deduplicates, and enriches each event
+4. **Publisher** sends processed events to Kafka
+
 ---
 
 ## Features
@@ -149,7 +185,16 @@ The platform supports **4 ingestion profiles** via Docker Compose `--profile`:
 - **Real-time Streaming**: Kafka-based trade event ingestion with at-least-once delivery
 - **Windowed Aggregation**: 1-minute tumbling windows with VWAP, volume, and price metrics
 - **Idempotent Processing**: `INSERT ... ON CONFLICT` ensures correctness during replays
-- **Dead Letter Queue**: Malformed messages routed to DLQ for investigation
+- **Dead Letter Queue**: Malformed messages routed to DLQ with preserved original payload and error context for debugging/replay
+- **Memory-Safe Backpressure**: Coordinates message flow with aggregator memory state to prevent OOM during high cardinality or future-dated events
+- **Window Eviction Handling**: Automatically writes evicted windows to database, preventing silent data loss when max_windows limit is exceeded
+- **Safe Shutdown**: Graceful shutdown flushes all incomplete windows with offset tracking before commit
+- **DB Connection Pool**: Min/max pool (2-5 connections) with auto-reconnect, pre-ping health checks, and automatic stale connection replacement
+- **DB Write Retry**: Exponential backoff retry (1s, 2s, 4s) on OperationalError, keeps running after exhausting retries (skips batch, logs error)
+- **Idle Window Flush**: Background timer (60s interval) flushes stale windows when traffic stops, preventing data loss in quiet periods
+- **Accurate Offset Metrics**: Per-partition commit timing with timer inside loop (no cumulative measurement)
+- **Empirical Memory Estimation**: 5KB per window empirical cost (accurate, zero overhead vs sys.getsizeof underestimation)
+- **Producer Retry**: Exponential backoff for BufferError (max 5) and KafkaException (max 3), parking queue for failed messages
 - **Production-Ready**: Docker, Kubernetes, CI/CD, monitoring documentation
 
 ## Quick Start
@@ -376,6 +421,7 @@ The platform includes a comprehensive chaos testing framework to validate pipeli
 | **Streaming** | Late Events | Grace period handling | ❌ |
 | **Streaming** | Out-of-Order | Event-time processing | ❌ |
 | **Streaming** | Encoding Issues | Detect and route to DLQ | ✅ |
+| **Streaming** | Oversized Messages (>1MB) | Size validation rejects at producer | ✅ |
 | **Batch** | Corrupt Files | Reject or partial process | ✅ |
 | **Batch** | Schema Drift | Validate and reject if required fields missing | ✅ |
 | **Batch** | Empty Files | Handle gracefully (0 records) | ❌ |
@@ -459,6 +505,7 @@ docker exec kafka kafka-console-consumer \
 │  │ • Late Events       │            │ • Empty/Partial     │            │
 │  │ • Out-of-Order      │            │ • Wrong Format      │            │
 │  │ • High Volume       │            │ • Malformed Rows    │            │
+│  │ • Oversized (>1MB)  │            │ • Large Files       │            │
 │  └──────────┬──────────┘            └──────────┬──────────┘            │
 │             │                                  │                        │
 │             └──────────────┬───────────────────┘                        │
@@ -564,7 +611,7 @@ See [.env.example](.env.example) for complete configuration options.
 | Document | Description |
 |----------|-------------|
 | [K8S_AUTOSCALING_HA.md](docs/K8S_AUTOSCALING_HA.md) | Autoscaling, HA, recovery validation (Q1) |
-| [CDC_SCD_CACHING.md](docs/CDC_SCD_CACHING.md) | CDC, SCD, caching strategies (Q4, Q7) |
+| [FUTURE_ROADMAP.md](docs/FUTURE_ROADMAP.md) | Proposed future enhancements (not implemented) |
 | [terraform/](terraform/) | AWS deployment with ECS, MSK, RDS |
 
 ### SQL Queries

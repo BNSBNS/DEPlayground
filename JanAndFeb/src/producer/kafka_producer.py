@@ -2,9 +2,16 @@
 
 This module provides a high-level interface for producing trade events to Kafka
 with proper error handling, delivery callbacks, and graceful shutdown.
+
+Includes:
+- Exponential backoff retry with jitter for BufferError (Fix #8)
+- Bounded retry for Kafka exceptions (Fix #2)
+- Parking queue for failed messages
 """
 
+import random
 import time
+from collections import deque
 from typing import Callable
 
 from confluent_kafka import KafkaException, Producer
@@ -58,6 +65,11 @@ class TradeProducer(DeliveryCallbackMixin):
         # Statistics
         self._total_produced = 0
 
+        # Parking queue for failed messages (Fix #2)
+        self._parking_queue: deque[tuple[TradeEvent, str]] = deque(
+            maxlen=self.producer_settings.parking_queue_max_size
+        )
+
     @property
     def producer(self) -> Producer:
         """Get or create the Kafka producer."""
@@ -79,43 +91,65 @@ class TradeProducer(DeliveryCallbackMixin):
         logger.debug("Trade delivered successfully")
 
     def produce_trade(self, trade: TradeEvent) -> None:
-        """Produce a single trade event to Kafka.
+        """Produce a single trade event with retry logic.
+
+        Separate retry strategies:
+        - BufferError: Max 5 retries with exponential backoff (Fix #8)
+        - KafkaException: Max 3 retries with exponential backoff (Fix #2)
+        - Failed messages go to parking queue
 
         Args:
             trade: The trade event to produce.
-
-        Raises:
-            KafkaException: If producing fails immediately (buffer full, etc.)
         """
         start_time = time.perf_counter()
-        try:
-            self.producer.produce(
-                topic=self.kafka_settings.topic,
-                key=trade.to_kafka_key(),
-                value=serialize_message(trade.to_kafka_value()),
-                callback=self._delivery_callback,
-            )
-            self._total_produced += 1
-            metrics.trades_produced.labels(symbol=trade.symbol).inc()
+        key = trade.to_kafka_key()
+        value = serialize_message(trade.to_kafka_value())
 
-            # Trigger delivery callbacks without blocking
-            self.producer.poll(0)
+        for attempt in range(self.producer_settings.buffer_retry_max):
+            try:
+                self.producer.produce(
+                    topic=self.kafka_settings.topic,
+                    key=key,
+                    value=value,
+                    callback=self._delivery_callback,
+                )
+                self._total_produced += 1
+                metrics.trades_produced.labels(symbol=trade.symbol).inc()
+                self.producer.poll(0)
 
-        except BufferError:
-            logger.warning("Producer buffer full, waiting...")
-            # Wait for some messages to be delivered
-            self.producer.poll(1.0)
-            # Retry
-            self.producer.produce(
-                topic=self.kafka_settings.topic,
-                key=trade.to_kafka_key(),
-                value=serialize_message(trade.to_kafka_value()),
-                callback=self._delivery_callback,
-            )
-            self._total_produced += 1
-            metrics.trades_produced.labels(symbol=trade.symbol).inc()
-        finally:
-            metrics.produce_duration.observe(time.perf_counter() - start_time)
+                if attempt > 0:
+                    metrics.producer_buffer_full_retries_total.labels(status="success").inc()
+
+                metrics.produce_duration.observe(time.perf_counter() - start_time)
+                return
+
+            except BufferError:
+                if attempt == self.producer_settings.buffer_retry_max - 1:
+                    self._parking_queue.append((trade, "BufferError"))
+                    metrics.parking_queue_size.set(len(self._parking_queue))
+                    metrics.producer_buffer_full_retries_total.labels(status="failure").inc()
+                    logger.error("Buffer full after retries, parked", symbol=trade.symbol)
+                    break
+
+                backoff = min(2 ** attempt, self.producer_settings.buffer_retry_backoff_max)
+                jitter = backoff * random.random() * self.producer_settings.buffer_retry_jitter
+                self.producer.poll(backoff + jitter)
+
+            except KafkaException as e:
+                if attempt >= self.producer_settings.kafka_produce_max_retries - 1:
+                    self._parking_queue.append((trade, str(e)))
+                    metrics.parking_queue_size.set(len(self._parking_queue))
+                    metrics.kafka_produce_retries_total.labels(status="failure").inc()
+                    logger.error("Kafka error after retries, parked", symbol=trade.symbol, error=str(e))
+                    break
+
+                backoff = min(2 ** attempt, self.producer_settings.buffer_retry_backoff_max)
+                jitter = backoff * random.random() * self.producer_settings.buffer_retry_jitter
+                time.sleep(backoff + jitter)
+                if attempt > 0:
+                    metrics.kafka_produce_retries_total.labels(status="success").inc()
+
+        metrics.produce_duration.observe(time.perf_counter() - start_time)
 
     def run(
         self,
@@ -214,11 +248,53 @@ class TradeProducer(DeliveryCallbackMixin):
         finally:
             self.stop()
 
+    def _drain_parking_queue(self) -> None:
+        """Attempt to re-produce messages waiting in the parking queue.
+
+        Called during shutdown so buffered trades are not silently dropped.
+        """
+        if not self._parking_queue:
+            return
+
+        count = len(self._parking_queue)
+        logger.info("Draining parking queue", count=count)
+        drained = 0
+
+        while self._parking_queue:
+            trade, _ = self._parking_queue.popleft()
+            try:
+                key = trade.to_kafka_key()
+                value = serialize_message(trade.to_kafka_value())
+                self.producer.produce(
+                    topic=self.kafka_settings.topic,
+                    key=key,
+                    value=value,
+                    callback=self._delivery_callback,
+                )
+                drained += 1
+            except Exception as e:
+                logger.warning(
+                    "Parking queue drain failed for message",
+                    symbol=trade.symbol,
+                    error=str(e),
+                )
+                # Stop draining if the producer itself is unhealthy
+                break
+
+        metrics.parking_queue_size.set(len(self._parking_queue))
+        logger.info(
+            "Parking queue drain complete",
+            drained=drained,
+            remaining=len(self._parking_queue),
+        )
+
     def stop(self) -> None:
         """Stop the producer and flush pending messages."""
         self._running = False
 
         if self._producer is not None:
+            # Attempt to drain parked messages before flushing
+            self._drain_parking_queue()
             logger.info("Flushing pending messages...")
             # Wait up to 10 seconds for messages to be delivered
             remaining = self._producer.flush(timeout=10.0)
@@ -232,6 +308,7 @@ class TradeProducer(DeliveryCallbackMixin):
             "Producer stopped",
             total_produced=self._total_produced,
             failed=self._delivery_errors,
+            parking_queue_dropped=len(self._parking_queue),
         )
 
     def get_stats(self) -> dict[str, int]:

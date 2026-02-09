@@ -129,32 +129,37 @@ def create_admin_client(settings: KafkaSettings | None = None) -> AdminClient:
 def ensure_topics_exist(
     settings: KafkaSettings | None = None,
     num_partitions: int = 6,
-    replication_factor: int = 1,
 ) -> None:
     """Ensure required Kafka topics exist.
 
     Creates the main trades topic and DLQ topic if they don't exist.
+    Replication factor and min.insync.replicas are read from KafkaSettings.
 
     Args:
         settings: Kafka settings.
         num_partitions: Number of partitions for new topics.
-        replication_factor: Replication factor for new topics.
     """
     if settings is None:
         settings = get_settings().kafka
 
     admin = create_admin_client(settings)
 
+    topic_config = {
+        "min.insync.replicas": str(settings.min_insync_replicas),
+    }
+
     topics = [
         NewTopic(
             topic=settings.topic,
             num_partitions=num_partitions,
-            replication_factor=replication_factor,
+            replication_factor=settings.replication_factor,
+            config=topic_config,
         ),
         NewTopic(
             topic=settings.dlq_topic,
             num_partitions=max(1, num_partitions // 2),  # Fewer partitions for DLQ
-            replication_factor=replication_factor,
+            replication_factor=settings.replication_factor,
+            config=topic_config,
         ),
     ]
 

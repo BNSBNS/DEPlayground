@@ -187,8 +187,11 @@ class TradeAggregate(BaseModel):
         """Convert to a tuple for PostgreSQL insertion.
 
         Returns tuple matching the column order in trade_aggregates table:
-        (symbol, window_start, window_end, vwap, total_volume, trade_count,
-         max_price, min_price, lmp, lmp_energy, lmp_congestion, lmp_loss)
+        (symbol, window_start, window_end, vwap, total_volume,
+         trade_count, max_price, min_price, lmp, lmp_energy, lmp_congestion, lmp_loss)
+
+        Note: total_value is excluded — it is a calculation-only field
+        used to derive vwap in-flight and is not persisted.
         """
         return (
             self.symbol,

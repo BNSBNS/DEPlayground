@@ -245,10 +245,6 @@ with DAG(
 
 ## Implementation References
 
-For the Unified architecture implementation, see:
-- [src/lakehouse/](../src/lakehouse/) - Bronze, Silver, Gold layers
-- [LAKEHOUSE_ARCHITECTURE.md](./LAKEHOUSE_ARCHITECTURE.md) - Detailed design
-
 For Lambda architecture examples:
 - [Apache Beam](https://beam.apache.org/) - Unified batch/streaming API
 - [Spark Structured Streaming](https://spark.apache.org/docs/latest/structured-streaming-programming-guide.html)

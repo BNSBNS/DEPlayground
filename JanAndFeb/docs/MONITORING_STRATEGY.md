@@ -89,6 +89,9 @@ offset_commits_total{status="failed"}
 
 # Backpressure state (0=flowing, 1=throttled, 2=paused)
 backpressure_state
+
+# Memory-based backpressure pauses (monitors aggregator memory pressure)
+backpressure_memory_pause_count
 ```
 
 ### Interpreting Results
@@ -175,6 +178,7 @@ To create a panel:
 | `error_rate` | Errors / total messages | > 1% | Data quality issue |
 | `dlq_message_count` | Messages in DLQ | > 0 | Immediate investigation |
 | `active_windows` | In-memory window count | > 1000 | Memory pressure |
+| `evicted_windows_total` | Windows forcibly evicted | > 100 | High cardinality or future-dated events |
 | `aggregates_written_per_minute` | DB write rate | < 5 (market hours) | Processing issue |
 
 ### Database Metrics

@@ -15,22 +15,18 @@ Without backpressure, a slow database can cause:
 - Message loss during recovery
 """
 
-import asyncio
 import threading
 import time
 from collections import deque
-from dataclasses import dataclass, field
 from datetime import datetime, UTC
 from enum import Enum
-from typing import Callable, TypeVar, Generic
+from typing import Callable
 
 from confluent_kafka import Consumer, TopicPartition
 
 from src.common.logging_config import get_logger
 
 logger = get_logger(__name__)
-
-T = TypeVar("T")
 
 
 class FlowState(str, Enum):
@@ -39,20 +35,6 @@ class FlowState(str, Enum):
     THROTTLED = "throttled"  # Reduced rate
     PAUSED = "paused"        # Kafka consumption paused
 
-
-@dataclass
-class FlowMetrics:
-    """Metrics for flow control monitoring."""
-    state: FlowState = FlowState.FLOWING
-    queue_depth: int = 0
-    queue_capacity: int = 0
-    messages_in_flight: int = 0
-    pause_count: int = 0
-    resume_count: int = 0
-    throttle_count: int = 0
-    last_state_change: datetime = field(default_factory=lambda: datetime.now(UTC))
-    current_throughput: float = 0.0  # messages per second
-    target_throughput: float = 0.0
 
 
 class BackpressureController:
@@ -342,21 +324,6 @@ class BackpressureController:
                 pass
         self._state = FlowState.FLOWING
 
-    def get_metrics(self) -> FlowMetrics:
-        """Get current flow control metrics."""
-        return FlowMetrics(
-            state=self._state,
-            queue_depth=self._in_flight_count,
-            queue_capacity=self._high_watermark,
-            messages_in_flight=self._in_flight_count,
-            pause_count=self._pause_count,
-            resume_count=self._resume_count,
-            throttle_count=self._throttle_count,
-            last_state_change=self._last_state_change,
-            current_throughput=self._current_throughput,
-            target_throughput=float(self._high_watermark),
-        )
-
     def get_stats(self) -> dict:
         """Get statistics for monitoring."""
         return {
@@ -373,98 +340,3 @@ class BackpressureController:
         }
 
 
-class BoundedQueue(Generic[T]):
-    """Thread-safe bounded queue with backpressure support.
-
-    When the queue is full, put() will block until space is available.
-    This provides natural backpressure in producer-consumer patterns.
-    """
-
-    def __init__(self, maxsize: int = 1000):
-        """Initialize the bounded queue.
-
-        Args:
-            maxsize: Maximum queue size
-        """
-        self._queue: deque[T] = deque(maxlen=maxsize)
-        self._maxsize = maxsize
-        self._lock = threading.Lock()
-        self._not_full = threading.Condition(self._lock)
-        self._not_empty = threading.Condition(self._lock)
-        self._closed = False
-
-    def put(self, item: T, timeout: float | None = None) -> bool:
-        """Put an item in the queue.
-
-        Blocks if queue is full until space is available.
-
-        Args:
-            item: Item to add
-            timeout: Maximum time to wait (None = forever)
-
-        Returns:
-            True if item was added, False if timeout or closed
-        """
-        with self._not_full:
-            if self._closed:
-                return False
-
-            if len(self._queue) >= self._maxsize:
-                if not self._not_full.wait(timeout):
-                    return False
-
-            if self._closed:
-                return False
-
-            self._queue.append(item)
-            self._not_empty.notify()
-            return True
-
-    def get(self, timeout: float | None = None) -> T | None:
-        """Get an item from the queue.
-
-        Blocks if queue is empty until an item is available.
-
-        Args:
-            timeout: Maximum time to wait (None = forever)
-
-        Returns:
-            Item or None if timeout or closed
-        """
-        with self._not_empty:
-            if self._closed and len(self._queue) == 0:
-                return None
-
-            if len(self._queue) == 0:
-                if not self._not_empty.wait(timeout):
-                    return None
-
-            if len(self._queue) == 0:
-                return None
-
-            item = self._queue.popleft()
-            self._not_full.notify()
-            return item
-
-    def qsize(self) -> int:
-        """Get current queue size."""
-        return len(self._queue)
-
-    def is_full(self) -> bool:
-        """Check if queue is full."""
-        return len(self._queue) >= self._maxsize
-
-    def close(self) -> None:
-        """Close the queue, unblocking all waiters."""
-        with self._lock:
-            self._closed = True
-            self._not_full.notify_all()
-            self._not_empty.notify_all()
-
-    def drain(self) -> list[T]:
-        """Drain all items from the queue."""
-        with self._lock:
-            items = list(self._queue)
-            self._queue.clear()
-            self._not_full.notify_all()
-            return items

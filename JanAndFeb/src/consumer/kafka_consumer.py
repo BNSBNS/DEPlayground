@@ -12,6 +12,10 @@ Key reliability improvements:
 3. True Kafka lag metrics (offset-based)
 4. Backpressure and flow control
 5. Memory guardrails
+6. DB connection pooling with auto-reconnect and retry (Fix #1, #7)
+7. Idle window flush timer to prevent data loss when traffic stops (Fix #3)
+8. Accurate per-partition offset commit timing (Fix #5)
+9. Empirical memory estimation for window state (Fix #6)
 """
 
 import json
@@ -90,6 +94,7 @@ class TradeConsumer:
             late_event_grace_seconds=self._consumer_settings.late_event_grace_seconds,
             max_windows=1000,
             max_memory_mb=256,
+            empirical_bytes_per_window=self._consumer_settings.empirical_bytes_per_window,
         )
 
         # Initialize backpressure controller with memory coordination
@@ -117,6 +122,11 @@ class TradeConsumer:
         # Lag metrics refresh interval
         self._last_lag_refresh = 0.0
         self._lag_refresh_interval = 10.0  # seconds
+
+        # Idle flush tracking
+        self._last_idle_flush = 0.0
+        self._idle_flush_interval = float(self._consumer_settings.idle_flush_interval)
+        self._idle_flush_max_batch = self._consumer_settings.idle_flush_max_batch
 
     @classmethod
     def from_settings(cls) -> "TradeConsumer":
@@ -204,7 +214,15 @@ class TradeConsumer:
 
             # Write completed aggregates to database and commit offsets
             if completed_results:
-                self._write_and_commit(completed_results)
+                try:
+                    self._write_and_commit(completed_results)
+                except Exception as e:
+                    # write_aggregates_batch already retries; this catches truly
+                    # unexpected errors so the consumer loop does not crash.
+                    logger.error(
+                        "Unexpected error writing aggregates; skipping commit",
+                        error=str(e),
+                    )
 
             self._messages_processed += 1
 
@@ -285,6 +303,17 @@ class TradeConsumer:
             # Don't commit offsets - will retry on restart
             raise
 
+        # write_aggregates_batch returns 0 when all retries are exhausted
+        # (no exception raised). Committing offsets here would permanently
+        # lose those aggregates since Kafka won't replay them.
+        if written == 0:
+            logger.error(
+                "DB write returned 0 after retries; skipping offset commit "
+                "to preserve at-least-once replay safety",
+                count=len(aggregates),
+            )
+            return
+
         # Collect maximum offset per partition across all results
         partition_max_offsets: dict[int, int] = {}
         for result in results:
@@ -294,12 +323,14 @@ class TradeConsumer:
                     partition_max_offsets[partition] = offset
 
         # Commit offsets with retry
-        commit_start = time.perf_counter()
         for partition, offset in partition_max_offsets.items():
+            # Timer inside loop for per-partition timing (Fix #5)
+            commit_start = time.perf_counter()
             commit_result = self._offset_manager.commit_up_to(partition, offset)
+            commit_duration = time.perf_counter() - commit_start
 
             # Record metrics
-            metrics.offset_commit_duration.observe(time.perf_counter() - commit_start)
+            metrics.offset_commit_duration.observe(commit_duration)
             metrics.record_offset_commit(
                 success=commit_result.success,
                 retried=commit_result.retry_count > 0,
@@ -345,6 +376,55 @@ class TradeConsumer:
 
         except Exception as e:
             logger.warning("Failed to refresh lag metrics", error=str(e))
+
+    def _perform_idle_flush(self) -> None:
+        """Flush stale windows that haven't closed due to idle traffic.
+
+        This prevents data loss when traffic stops: windows normally close
+        when new events advance the watermark. Without traffic, windows
+        never close. This method uses wall clock time to detect and flush
+        stale windows.
+        """
+        now = datetime.now(UTC)
+        stale_results = self._aggregator.flush_stale_windows(
+            reference_time=now,
+            max_batch=self._idle_flush_max_batch,
+        )
+
+        if stale_results:
+            # Write flushed aggregates to database
+            try:
+                aggregates = [r.aggregate for r in stale_results]
+                self._db_writer.write_aggregates_batch(aggregates)
+                self._aggregates_written += len(aggregates)
+
+                # Commit offsets for flushed windows
+                partition_max_offsets: dict[int, int] = {}
+                for result in stale_results:
+                    for partition, offset in result.partition_offsets.items():
+                        current_max = partition_max_offsets.get(partition, -1)
+                        if offset > current_max:
+                            partition_max_offsets[partition] = offset
+
+                for partition, offset in partition_max_offsets.items():
+                    self._offset_manager.commit_up_to(partition, offset)
+
+                # Update metrics
+                metrics.idle_flushes_total.inc()
+                metrics.idle_flush_windows_count.observe(len(stale_results))
+
+                logger.info(
+                    "Idle flush completed",
+                    flushed_count=len(stale_results),
+                    partitions=list(partition_max_offsets.keys()),
+                )
+
+            except Exception as e:
+                logger.error(
+                    "Error during idle flush",
+                    error=str(e),
+                    flushed_count=len(stale_results),
+                )
 
     def _log_progress(self) -> None:
         """Log processing progress and aggregator state."""
@@ -402,6 +482,14 @@ class TradeConsumer:
 
                 # Poll for messages
                 msg = self._consumer.poll(timeout=poll_timeout)
+
+                # Idle flush runs on every iteration regardless of whether a
+                # message arrived. Without this, a window for symbol A would
+                # never flush while symbol B keeps producing messages.
+                current_time = time.time()
+                if current_time - self._last_idle_flush >= self._idle_flush_interval:
+                    self._perform_idle_flush()
+                    self._last_idle_flush = current_time
 
                 if msg is None:
                     # No message - refresh lag metrics
