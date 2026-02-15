@@ -9,10 +9,10 @@ from datetime import datetime, UTC
 from typing import Any, AsyncIterator
 from uuid import uuid4
 
-from ingestion.adapters.connectors.base import BaseConnector
-from ingestion.domain.models import SourceType
-from ingestion.ports import IngestionPort, MetricsPort
-from ingestion.resilience import CircuitBreaker, RetryPolicy
+from src.ingestion.adapters.connectors.base import BaseConnector
+from src.ingestion.domain.models import SourceType
+from src.ingestion.ports import IngestionPort, MetricsPort
+from src.ingestion.resilience import CircuitBreaker, RetryPolicy
 
 
 class MicroBatchConnector(BaseConnector):

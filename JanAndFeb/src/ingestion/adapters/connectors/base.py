@@ -11,9 +11,9 @@ from typing import Any, AsyncIterator
 
 import structlog
 
-from ingestion.ports import IngestionPort, MetricsPort
-from ingestion.domain.models import SourceType, SourceMetadata
-from ingestion.resilience import CircuitBreaker, RetryPolicy
+from src.ingestion.ports import IngestionPort, MetricsPort
+from src.ingestion.domain.models import SourceType, SourceMetadata
+from src.ingestion.resilience import CircuitBreaker, RetryPolicy
 
 
 logger = structlog.get_logger()

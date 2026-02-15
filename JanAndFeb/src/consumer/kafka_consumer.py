@@ -97,11 +97,11 @@ class TradeConsumer:
             empirical_bytes_per_window=self._consumer_settings.empirical_bytes_per_window,
         )
 
-        # Initialize backpressure controller with memory coordination
+        # Initialize backpressure controller with configurable thresholds
         self._backpressure = BackpressureController(
             self._consumer,
-            high_watermark=1000,
-            low_watermark=100,
+            high_watermark=self._consumer_settings.backpressure_high_watermark,
+            low_watermark=self._consumer_settings.backpressure_low_watermark,
             memory_check_fn=self._check_aggregator_memory,
         )
 
@@ -123,8 +123,8 @@ class TradeConsumer:
         self._last_lag_refresh = 0.0
         self._lag_refresh_interval = 10.0  # seconds
 
-        # Idle flush tracking
-        self._last_idle_flush = 0.0
+        # Idle flush tracking (use monotonic clock, immune to NTP adjustments)
+        self._last_idle_flush = time.monotonic()
         self._idle_flush_interval = float(self._consumer_settings.idle_flush_interval)
         self._idle_flush_max_batch = self._consumer_settings.idle_flush_max_batch
 
@@ -250,7 +250,7 @@ class TradeConsumer:
             if self._messages_processed % 1000 == 0:
                 self._log_progress()
 
-        except (json.JSONDecodeError, ValidationError, ValueError) as e:
+        except (json.JSONDecodeError, ValidationError, ValueError, TypeError) as e:
             # Handle malformed messages via DLQ
             self._errors_handled += 1
             metrics.dlq_messages.labels(error_type=type(e).__name__).inc()
@@ -295,23 +295,27 @@ class TradeConsumer:
                 metrics.aggregates_written.labels(symbol=agg.symbol).inc()
 
         except Exception as e:
-            logger.error(
-                "Failed to write aggregates to database",
+            logger.critical(
+                "Failed to write aggregates to database; "
+                "stopping consumer for replay safety",
                 error=str(e),
                 count=len(aggregates),
             )
-            # Don't commit offsets - will retry on restart
+            self._running = False
             raise
 
         # write_aggregates_batch returns 0 when all retries are exhausted
-        # (no exception raised). Committing offsets here would permanently
-        # lose those aggregates since Kafka won't replay them.
+        # (no exception raised). Continuing would risk a later successful
+        # commit_up_to advancing past these failed offsets on the same
+        # partition, permanently losing the data.
         if written == 0:
-            logger.error(
-                "DB write returned 0 after retries; skipping offset commit "
-                "to preserve at-least-once replay safety",
+            logger.critical(
+                "DB write returned 0 after retries; stopping consumer "
+                "to preserve at-least-once replay safety "
+                "(Kafka will replay from last committed offset on restart)",
                 count=len(aggregates),
             )
+            self._running = False
             return
 
         # Collect maximum offset per partition across all results
@@ -395,8 +399,19 @@ class TradeConsumer:
             # Write flushed aggregates to database
             try:
                 aggregates = [r.aggregate for r in stale_results]
-                self._db_writer.write_aggregates_batch(aggregates)
-                self._aggregates_written += len(aggregates)
+                written = self._db_writer.write_aggregates_batch(aggregates)
+
+                if written == 0:
+                    logger.critical(
+                        "Idle flush DB write failed after retries; "
+                        "stopping consumer for replay safety "
+                        "(Kafka will replay on restart)",
+                        count=len(aggregates),
+                    )
+                    self._running = False
+                    return
+
+                self._aggregates_written += written
 
                 # Commit offsets for flushed windows
                 partition_max_offsets: dict[int, int] = {}
@@ -420,11 +435,12 @@ class TradeConsumer:
                 )
 
             except Exception as e:
-                logger.error(
-                    "Error during idle flush",
+                logger.critical(
+                    "Error during idle flush; stopping consumer",
                     error=str(e),
                     flushed_count=len(stale_results),
                 )
+                self._running = False
 
     def _log_progress(self) -> None:
         """Log processing progress and aggregator state."""
@@ -486,7 +502,7 @@ class TradeConsumer:
                 # Idle flush runs on every iteration regardless of whether a
                 # message arrived. Without this, a window for symbol A would
                 # never flush while symbol B keeps producing messages.
-                current_time = time.time()
+                current_time = time.monotonic()  # Monotonic clock: immune to NTP adjustments
                 if current_time - self._last_idle_flush >= self._idle_flush_interval:
                     self._perform_idle_flush()
                     self._last_idle_flush = current_time
@@ -546,25 +562,33 @@ class TradeConsumer:
             try:
                 # Write to database
                 aggregates = [r.aggregate for r in remaining_results]
-                self._db_writer.write_aggregates_batch(aggregates)
-                self._aggregates_written += len(aggregates)
+                written = self._db_writer.write_aggregates_batch(aggregates)
 
-                # Commit offsets for flushed windows
-                partition_max_offsets: dict[int, int] = {}
-                for result in remaining_results:
-                    for partition, offset in result.partition_offsets.items():
-                        current_max = partition_max_offsets.get(partition, -1)
-                        if offset > current_max:
-                            partition_max_offsets[partition] = offset
+                if written == 0:
+                    logger.error(
+                        "Shutdown flush DB write failed after retries; "
+                        "skipping offset commit (data will replay on restart)",
+                        count=len(aggregates),
+                    )
+                else:
+                    self._aggregates_written += written
 
-                for partition, offset in partition_max_offsets.items():
-                    self._offset_manager.commit_up_to(partition, offset)
+                    # Commit offsets for flushed windows
+                    partition_max_offsets: dict[int, int] = {}
+                    for result in remaining_results:
+                        for partition, offset in result.partition_offsets.items():
+                            current_max = partition_max_offsets.get(partition, -1)
+                            if offset > current_max:
+                                partition_max_offsets[partition] = offset
 
-                logger.info(
-                    "Flushed and committed remaining data",
-                    aggregates=len(aggregates),
-                    partitions=list(partition_max_offsets.keys()),
-                )
+                    for partition, offset in partition_max_offsets.items():
+                        self._offset_manager.commit_up_to(partition, offset)
+
+                    logger.info(
+                        "Flushed and committed remaining data",
+                        aggregates=len(aggregates),
+                        partitions=list(partition_max_offsets.keys()),
+                    )
 
             except Exception as e:
                 logger.error(

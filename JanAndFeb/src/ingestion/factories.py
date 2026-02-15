@@ -8,9 +8,9 @@ from typing import Any
 
 import structlog
 
-from ingestion.ports import IngestionPort, MetricsPort
-from ingestion.domain.models import SourceType
-from ingestion.resilience import CircuitBreaker, RetryPolicy, RateLimiter
+from src.ingestion.ports import IngestionPort, MetricsPort
+from src.ingestion.domain.models import SourceType
+from src.ingestion.resilience import CircuitBreaker, RetryPolicy, RateLimiter
 
 
 logger = structlog.get_logger()
@@ -161,7 +161,7 @@ class ConnectorFactory:
 # Register default connectors
 def _register_default_connectors():
     """Register built-in connector implementations."""
-    from ingestion.adapters.connectors import (
+    from src.ingestion.adapters.connectors import (
         WebSocketConnector,
         SSEConnector,
         PollingConnector,
@@ -224,7 +224,7 @@ class AdapterFactory:
 # Register default adapters
 def _register_default_adapters():
     """Register built-in adapter implementations."""
-    from ingestion.adapters.formats import (
+    from src.ingestion.adapters.formats import (
         FinnhubAdapter,
         DexPaprikaAdapter,
         ENTSOEAdapter,

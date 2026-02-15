@@ -227,6 +227,26 @@ class WindowedAggregator:
         """
         return window_start + self.window_duration
 
+    def _build_aggregate(
+        self, symbol: str, window_start: datetime, state: "WindowState"
+    ) -> TradeAggregate:
+        """Build a TradeAggregate from completed window state.
+
+        Centralises aggregate construction so changes to fields are made
+        in one place rather than at every flush site.
+        """
+        return TradeAggregate(
+            symbol=symbol,
+            window_start=window_start,
+            window_end=self._get_window_end(window_start),
+            vwap=state.compute_vwap(),
+            total_volume=state.total_volume,
+            trade_count=state.trade_count,
+            max_price=state.max_price or Decimal("0"),
+            min_price=state.min_price or Decimal("0"),
+            total_value=state.total_value,
+        )
+
     def add_trade(
         self,
         trade: TradeEvent,
@@ -313,17 +333,7 @@ class WindowedAggregator:
             # Check if window has closed (past grace period)
             if watermark > window_end:
                 if not state.is_empty():
-                    aggregate = TradeAggregate(
-                        symbol=symbol,
-                        window_start=window_start,
-                        window_end=window_end,
-                        vwap=state.compute_vwap(),
-                        total_volume=state.total_volume,
-                        trade_count=state.trade_count,
-                        max_price=state.max_price or Decimal("0"),
-                        min_price=state.min_price or Decimal("0"),
-                        total_value=state.total_value,
-                    )
+                    aggregate = self._build_aggregate(symbol, window_start, state)
                     completed.append(WindowFlushResult(
                         aggregate=aggregate,
                         partition_offsets=state.get_all_max_offsets(),
@@ -369,18 +379,7 @@ class WindowedAggregator:
             state = self._windows[key]
 
             if not state.is_empty():
-                window_end = self._get_window_end(window_start)
-                aggregate = TradeAggregate(
-                    symbol=symbol,
-                    window_start=window_start,
-                    window_end=window_end,
-                    vwap=state.compute_vwap(),
-                    total_volume=state.total_volume,
-                    trade_count=state.trade_count,
-                    max_price=state.max_price or Decimal("0"),
-                    min_price=state.min_price or Decimal("0"),
-                    total_value=state.total_value,
-                )
+                aggregate = self._build_aggregate(symbol, window_start, state)
                 evicted_results.append(WindowFlushResult(
                     aggregate=aggregate,
                     partition_offsets=state.get_all_max_offsets(),
@@ -435,17 +434,7 @@ class WindowedAggregator:
             # Check if window should have closed based on wall clock time
             if watermark > window_end:
                 if not state.is_empty():
-                    aggregate = TradeAggregate(
-                        symbol=symbol,
-                        window_start=window_start,
-                        window_end=window_end,
-                        vwap=state.compute_vwap(),
-                        total_volume=state.total_volume,
-                        trade_count=state.trade_count,
-                        max_price=state.max_price or Decimal("0"),
-                        min_price=state.min_price or Decimal("0"),
-                        total_value=state.total_value,
-                    )
+                    aggregate = self._build_aggregate(symbol, window_start, state)
                     completed.append(WindowFlushResult(
                         aggregate=aggregate,
                         partition_offsets=state.get_all_max_offsets(),
@@ -487,18 +476,7 @@ class WindowedAggregator:
 
         for (symbol, window_start), state in self._windows.items():
             if not state.is_empty():
-                window_end = self._get_window_end(window_start)
-                aggregate = TradeAggregate(
-                    symbol=symbol,
-                    window_start=window_start,
-                    window_end=window_end,
-                    vwap=state.compute_vwap(),
-                    total_volume=state.total_volume,
-                    trade_count=state.trade_count,
-                    max_price=state.max_price or Decimal("0"),
-                    min_price=state.min_price or Decimal("0"),
-                    total_value=state.total_value,
-                )
+                aggregate = self._build_aggregate(symbol, window_start, state)
                 completed.append(WindowFlushResult(
                     aggregate=aggregate,
                     partition_offsets=state.get_all_max_offsets(),

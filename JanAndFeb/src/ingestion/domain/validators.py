@@ -10,7 +10,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from ingestion.domain.models import EnrichedTradeEvent, RawEvent, SourceMetadata
+from src.ingestion.domain.models import EnrichedTradeEvent, RawEvent, SourceMetadata
 
 
 class ValidationResult:

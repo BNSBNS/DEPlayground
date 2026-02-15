@@ -14,15 +14,15 @@ from typing import Any, Callable, Awaitable
 
 import structlog
 
-from ingestion.domain.models import EnrichedTradeEvent, RawEvent, SourceMetadata
-from ingestion.domain.validators import (
+from src.ingestion.domain.models import EnrichedTradeEvent, RawEvent, SourceMetadata
+from src.ingestion.domain.validators import (
     validate_symbol,
     validate_price,
     validate_volume,
     validate_timestamp,
     ValidationResult,
 )
-from ingestion.adapters.formats.base import DataAdapter
+from src.ingestion.adapters.formats.base import DataAdapter
 
 
 logger = structlog.get_logger()
@@ -322,10 +322,11 @@ class TransformationHandler(Handler):
         if isinstance(event, EnrichedTradeEvent):
             return event
 
-        # No adapter - cannot transform
+        # No adapter — pass through unchanged for downstream handlers.
+        # Adapter-less sources (batch, webhook, micro_batch) send events
+        # that are either pre-canonical or validated by downstream handlers.
         if not self._adapter:
-            logger.warning("No adapter configured for transformation")
-            return None
+            return event
 
         # Transform using adapter
         events = self._adapter.safe_transform(event)

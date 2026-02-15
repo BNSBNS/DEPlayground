@@ -15,16 +15,16 @@ on:
   push:
     branches: [main, develop]
     paths:
-      - "Jan/**"
+      - "JanAndFeb/**"
       - ".github/workflows/ci.yml"
   pull_request:
     branches: [main]
     paths:
-      - "Jan/**"
+      - "JanAndFeb/**"
 
 defaults:
   run:
-    working-directory: Jan
+    working-directory: JanAndFeb
 
 env:
   PYTHON_VERSION: "3.12"
@@ -108,7 +108,7 @@ jobs:
       - name: Upload coverage report
         uses: codecov/codecov-action@v4
         with:
-          files: Jan/coverage.xml
+          files: JanAndFeb/coverage.xml
           flags: unittests
           fail_ci_if_error: false
 
@@ -151,8 +151,8 @@ jobs:
       - name: Build producer image
         uses: docker/build-push-action@v5
         with:
-          context: Jan
-          file: Jan/docker/producer/Dockerfile
+          context: JanAndFeb
+          file: JanAndFeb/docker/producer/Dockerfile
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta-producer.outputs.tags }}
           labels: ${{ steps.meta-producer.outputs.labels }}
@@ -173,8 +173,8 @@ jobs:
       - name: Build consumer image
         uses: docker/build-push-action@v5
         with:
-          context: Jan
-          file: Jan/docker/consumer/Dockerfile
+          context: JanAndFeb
+          file: JanAndFeb/docker/consumer/Dockerfile
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta-consumer.outputs.tags }}
           labels: ${{ steps.meta-consumer.outputs.labels }}

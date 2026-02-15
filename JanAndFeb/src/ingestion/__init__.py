@@ -21,7 +21,7 @@ Design Patterns Used:
 - Backpressure: Flow control
 """
 
-from ingestion.ports import (
+from src.ingestion.ports import (
     IngestionPort,
     EventPublisherPort,
     MetricsPort,

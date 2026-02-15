@@ -4,7 +4,7 @@ Events flow through a chain of handlers:
 Validation -> Deduplication -> Enrichment -> Transformation
 """
 
-from ingestion.pipeline.handlers import (
+from src.ingestion.pipeline.handlers import (
     Handler,
     ValidationHandler,
     DeduplicationHandler,
@@ -12,7 +12,7 @@ from ingestion.pipeline.handlers import (
     TransformationHandler,
     FilterHandler,
 )
-from ingestion.pipeline.builder import PipelineBuilder
+from src.ingestion.pipeline.builder import PipelineBuilder
 
 __all__ = [
     "Handler",

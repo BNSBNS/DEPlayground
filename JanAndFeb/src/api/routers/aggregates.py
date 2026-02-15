@@ -89,7 +89,7 @@ async def get_aggregates(
     params["offset"] = offset
 
     count_rows = await asyncio.to_thread(db.query_all, count_sql, params)
-    total = count_rows[0]["total"]
+    total = count_rows[0]["total"] if count_rows else 0
     rows = await asyncio.to_thread(db.query_all, data_sql, params)
 
     return PaginatedResponse(

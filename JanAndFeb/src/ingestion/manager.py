@@ -14,11 +14,11 @@ from typing import Any
 
 import structlog
 
-from ingestion.ports import IngestionPort, EventPublisherPort, MetricsPort
-from ingestion.domain.models import EnrichedTradeEvent
-from ingestion.pipeline.builder import Pipeline, PipelineBuilder
-from ingestion.adapters.formats.base import DataAdapter
-from ingestion.factories import ConnectorFactory, AdapterFactory, ConnectorType
+from src.ingestion.ports import IngestionPort, EventPublisherPort, MetricsPort
+from src.ingestion.domain.models import EnrichedTradeEvent
+from src.ingestion.pipeline.builder import Pipeline, PipelineBuilder
+from src.ingestion.adapters.formats.base import DataAdapter
+from src.ingestion.factories import ConnectorFactory, AdapterFactory, ConnectorType
 
 
 logger = structlog.get_logger()
@@ -116,6 +116,7 @@ class IngestionManager:
         connector_type: ConnectorType,
         config: dict[str, Any],
         adapter_name: str | None = None,
+        upstream_source: str | None = None,
     ) -> None:
         """Add a connector from configuration.
 
@@ -123,7 +124,35 @@ class IngestionManager:
             connector_type: Type of connector
             config: Connector configuration
             adapter_name: Optional adapter name
+            upstream_source: Name of an already-added connector to use as
+                upstream for micro_batch connectors. The upstream connector
+                is removed from independent management to prevent
+                double-consumption.
         """
+        # Resolve upstream for micro_batch connectors
+        if upstream_source and connector_type == ConnectorType.MICRO_BATCH:
+            upstream_connector = self.get_connector(upstream_source)
+            if upstream_connector is None:
+                self._logger.error(
+                    "Upstream source not found for micro_batch connector; "
+                    "ensure upstream is added before micro_batch",
+                    upstream_source=upstream_source,
+                    micro_batch=config.get("name"),
+                )
+                return
+            config["upstream"] = upstream_connector
+            # Remove upstream from independent management to prevent
+            # double-consumption (micro_batch owns it now)
+            self._connectors = [
+                (c, p, a) for c, p, a in self._connectors
+                if c.name != upstream_source
+            ]
+            self._logger.info(
+                "Upstream connector transferred to micro_batch",
+                upstream=upstream_source,
+                micro_batch=config.get("name"),
+            )
+
         connector = ConnectorFactory.create(
             connector_type=connector_type,
             config=config,
@@ -255,7 +284,7 @@ class IngestionManager:
         and potential replay.
         """
         try:
-            from ingestion.domain.models import SourceMetadata, SourceType
+            from src.ingestion.domain.models import SourceMetadata, SourceType
             import json
 
             # Extract symbol from raw_event if possible, otherwise use "UNKNOWN"

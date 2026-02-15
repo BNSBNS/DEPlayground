@@ -7,20 +7,20 @@ This module provides cross-cutting concerns for building resilient connectors:
 - Retry: Automatic retry with exponential backoff
 """
 
-from ingestion.resilience.circuit_breaker import (
+from src.ingestion.resilience.circuit_breaker import (
     CircuitBreaker,
     CircuitState,
     CircuitOpenError,
 )
-from ingestion.resilience.rate_limiter import (
+from src.ingestion.resilience.rate_limiter import (
     RateLimiter,
     TokenBucketRateLimiter,
 )
-from ingestion.resilience.backpressure import (
+from src.ingestion.resilience.backpressure import (
     BackpressureHandler,
     BackpressureStrategy,
 )
-from ingestion.resilience.retry import (
+from src.ingestion.resilience.retry import (
     RetryPolicy,
     retry_with_backoff,
 )

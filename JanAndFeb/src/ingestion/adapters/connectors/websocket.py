@@ -10,10 +10,10 @@ from typing import Any, AsyncIterator
 import websockets
 from websockets.client import WebSocketClientProtocol
 
-from ingestion.adapters.connectors.base import BaseConnector
-from ingestion.domain.models import SourceType
-from ingestion.ports import MetricsPort
-from ingestion.resilience import CircuitBreaker, RetryPolicy
+from src.ingestion.adapters.connectors.base import BaseConnector
+from src.ingestion.domain.models import SourceType
+from src.ingestion.ports import MetricsPort
+from src.ingestion.resilience import CircuitBreaker, RetryPolicy
 
 
 class WebSocketConnector(BaseConnector):

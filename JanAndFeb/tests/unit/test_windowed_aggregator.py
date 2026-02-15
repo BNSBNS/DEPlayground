@@ -220,11 +220,11 @@ class TestWindowedAggregator:
         )
         completed = aggregator.add_trade(trade2)
 
-        # First window should be completed
+        # First window should be completed (returns WindowFlushResult wrapping TradeAggregate)
         assert len(completed) == 1
-        assert completed[0].symbol == "POWER_DE"
-        assert completed[0].trade_count == 1
-        assert completed[0].total_volume == Decimal("50.00")
+        assert completed[0].aggregate.symbol == "POWER_DE"
+        assert completed[0].aggregate.trade_count == 1
+        assert completed[0].aggregate.total_volume == Decimal("50.00")
 
     def test_flush_all(self) -> None:
         """Test flushing all windows."""
@@ -267,7 +267,7 @@ class TestWindowedAggregator:
         completed = aggregator.flush_all()
 
         assert len(completed) == 1
-        agg = completed[0]
+        agg = completed[0].aggregate  # WindowFlushResult wraps TradeAggregate
 
         assert agg.symbol == "POWER_DE"
         assert agg.trade_count == 10

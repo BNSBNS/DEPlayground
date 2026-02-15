@@ -134,15 +134,19 @@ class TestSchemaContract:
         ]
 
         # Extract VALUES placeholders
-        values_match = re.search(
-            r"VALUES\s*\((.*?)\)",
+        # %(field)s placeholders contain inner parens that break simple regex.
+        # Instead, extract the VALUES-to-ON CONFLICT region, then find all
+        # placeholders (%(field)s and NOW()) within it.
+        values_section_match = re.search(
+            r"VALUES\s*\((.*?)ON\s+CONFLICT",
             upsert_sql,
             re.DOTALL | re.IGNORECASE,
         )
-        assert values_match, "Could not parse VALUES clause"
-        values_placeholders = [
-            val.strip() for val in values_match.group(1).split(",") if val.strip()
-        ]
+        assert values_section_match, "Could not parse VALUES clause"
+        values_section = values_section_match.group(1)
+        values_placeholders = re.findall(
+            r"%\(\w+\)s|NOW\(\)", values_section
+        )
 
         # Count should match
         assert len(insert_fields) == len(values_placeholders), (

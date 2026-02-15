@@ -1037,6 +1037,10 @@ ORDER BY 1;
 | `trade_count` | INTEGER | Number of trades |
 | `max_price` | NUMERIC(18,8) | Highest price in window |
 | `min_price` | NUMERIC(18,8) | Lowest price in window |
+| `lmp` | NUMERIC(18,8) | Locational Marginal Price (nullable) |
+| `lmp_energy` | NUMERIC(18,8) | LMP energy component (nullable) |
+| `lmp_congestion` | NUMERIC(18,8) | LMP congestion component (nullable) |
+| `lmp_loss` | NUMERIC(18,8) | LMP loss component (nullable) |
 | `created_at` | TIMESTAMPTZ | Record creation time |
 | `updated_at` | TIMESTAMPTZ | Last update time |
 

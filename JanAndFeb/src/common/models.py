@@ -4,7 +4,7 @@ This module defines the core data models used throughout the energy trading plat
 All models use strict validation to ensure data integrity in the trading pipeline.
 """
 
-from datetime import datetime
+from datetime import UTC, datetime
 from decimal import Decimal
 from enum import Enum
 from typing import Annotated
@@ -90,9 +90,18 @@ class TradeEvent(BaseModel):
     @field_validator("event_timestamp", mode="before")
     @classmethod
     def ensure_utc(cls, v: datetime | str) -> datetime:
-        """Ensure timestamp is parsed correctly."""
+        """Ensure timestamp is timezone-aware (UTC).
+
+        Coerces naive datetimes and strings without timezone to UTC.
+        Prevents TypeError when computing freshness metrics (aware - naive).
+        """
         if isinstance(v, str):
-            return datetime.fromisoformat(v.replace("Z", "+00:00"))
+            dt = datetime.fromisoformat(v.replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                return dt.replace(tzinfo=UTC)
+            return dt
+        if isinstance(v, datetime) and v.tzinfo is None:
+            return v.replace(tzinfo=UTC)
         return v
 
     def to_kafka_key(self) -> bytes:

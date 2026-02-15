@@ -6,7 +6,7 @@ Adapters convert external API formats to the internal EnrichedTradeEvent model.
 from abc import ABC, abstractmethod
 from typing import Any
 
-from ingestion.domain.models import EnrichedTradeEvent, SourceMetadata, SourceType
+from src.ingestion.domain.models import EnrichedTradeEvent, SourceMetadata, SourceType
 
 
 class DataAdapter(ABC):

@@ -121,10 +121,10 @@ Consumer has **2 roles**:
 **Code path to trace:**
 
 ```python
-# config.py:85-95
+# src/common/config.py:37-64
 class KafkaSettings:
     bootstrap_servers: str = "localhost:9092"
-    topic: str = "market-trades"
+    topic: str = "trades"
                     │
                     ▼
 # kafka_utils.py:19-40
@@ -362,7 +362,7 @@ else:
 │      │                   ▼                       ▼                          │
 │      │            ┌──────────────────────────────────┐                     │
 │      │            │           KAFKA                  │                     │
-│      │            │      (market-trades topic)       │                     │
+│      │            │         (trades topic)           │                     │
 │      │            └──────────────────────────────────┘                     │
 │      │                           │                                          │
 └──────│───────────────────────────│──────────────────────────────────────────┘
@@ -443,11 +443,11 @@ Apache Kafka serves as the central nervous system of this platform - a distribut
 
 | Concept | Definition | Code Reference |
 |---------|------------|----------------|
-| **Topic** | A named stream of records (e.g., `market-trades`) | `config.py:89` - `topic: str = "market-trades"` |
-| **Partition** | A topic subdivision for parallelism | `config.py:90` - `partitions: int = 3` |
+| **Topic** | A named stream of records (e.g., `trades`) | `config.py:43` - `topic: str = "trades"` |
+| **Partition** | A topic subdivision for parallelism | `kafka_utils.py` - `ensure_topics_exist(num_partitions=6)` |
 | **Offset** | Sequential ID for each message in a partition | Consumer tracks in `kafka_consumer.py:89-95` |
-| **Consumer Group** | Coordinated consumers sharing partition load | `config.py:91` - `consumer_group: str = "trade-processor"` |
-| **Replication** | Data copies across brokers for fault tolerance | `config.py:92` - `replication_factor: int = 1` |
+| **Consumer Group** | Coordinated consumers sharing partition load | `config.py:52` - `consumer_group: str = "trade-aggregator"` |
+| **Replication** | Data copies across brokers for fault tolerance | `config.py:58` - `replication_factor: int = 1` |
 
 ### KRaft Mode (No Zookeeper)
 
@@ -964,7 +964,7 @@ class CircuitBreaker:
 ### TradeConsumer
 
 ```python
-# kafka_consumer.py:38-528
+# kafka_consumer.py:42-627
 class TradeConsumer:
     """Consumes trades with offset tracking and backpressure."""
 
@@ -1036,7 +1036,7 @@ def _safe_commit(self, offsets: list[TopicPartition] | None = None) -> None:
 ### WindowedAggregator
 
 ```python
-# windowed_aggregator.py:150-473
+# windowed_aggregator.py:143-525
 class WindowedAggregator:
     """Tumbling window aggregation with VWAP calculation."""
 
@@ -1481,7 +1481,7 @@ docker-compose -f docker-compose-full.yml logs -f consumer
 # Check Kafka topics
 docker exec -it kafka kafka-topics --bootstrap-server localhost:9092 --list
 docker exec -it kafka kafka-console-consumer --bootstrap-server localhost:9092 \
-    --topic market-trades --from-beginning --max-messages 5
+    --topic trades --from-beginning --max-messages 5
 
 # Query API
 curl http://localhost:8000/health

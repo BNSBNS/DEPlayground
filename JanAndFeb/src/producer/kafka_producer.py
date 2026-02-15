@@ -136,7 +136,8 @@ class TradeProducer(DeliveryCallbackMixin):
                 self.producer.poll(backoff + jitter)
 
             except KafkaException as e:
-                if attempt >= self.producer_settings.kafka_produce_max_retries - 1:
+                # Use same retry ceiling as the loop bound for consistency
+                if attempt >= self.producer_settings.buffer_retry_max - 1:
                     self._parking_queue.append((trade, str(e)))
                     metrics.parking_queue_size.set(len(self._parking_queue))
                     metrics.kafka_produce_retries_total.labels(status="failure").inc()

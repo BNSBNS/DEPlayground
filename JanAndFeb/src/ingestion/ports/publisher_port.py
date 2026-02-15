@@ -8,7 +8,7 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ingestion.domain.models import EnrichedTradeEvent
+    from src.ingestion.domain.models import EnrichedTradeEvent
 
 
 class EventPublisherPort(ABC):

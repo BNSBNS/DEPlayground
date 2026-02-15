@@ -4,7 +4,7 @@ This layer contains the business rules and domain models for ingestion.
 It has NO dependencies on external frameworks or infrastructure.
 """
 
-from ingestion.domain.models import (
+from src.ingestion.domain.models import (
     SourceType,
     SourceMetadata,
     RawEvent,

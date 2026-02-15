@@ -28,7 +28,7 @@
 | `kafka_utils.py` | `src/common/kafka_utils.py` | `DeliveryCallbackMixin` | #7, #11 |
 | `kafka_producer.py` | `src/producer/kafka_producer.py` | #7 |
 | `docker-compose-full.yml` | `docker-compose-full.yml` | #1, #8 |
-| `config.py` | `src/config.py` | #8 |
+| `config.py` | `src/common/config.py` | #8 |
 
 ---
 
@@ -40,7 +40,7 @@
 flowchart TB
     subgraph External["External Data Sources"]
         FH[Finnhub API]
-        PG[Polygon API]
+        DP[DexPaprika API]
         FILES[CSV/JSON/Parquet Files]
     end
 
@@ -58,7 +58,7 @@ flowchart TB
     end
 
     FH -->|WebSocket| ING
-    PG -->|WebSocket| ING
+    DP -->|SSE| ING
     FILES -->|File Watch| ING
     ING -->|Publish| KAFKA
     KAFKA -->|Subscribe| CONS
@@ -539,13 +539,13 @@ flowchart TB
         P2[Producer 2]
     end
 
-    subgraph Topic["market-trades (3 partitions)"]
+    subgraph Topic["trades (6 partitions)"]
         PA0[Partition 0<br/>AAPL, MSFT]
         PA1[Partition 1<br/>GOOGL, AMZN]
         PA2[Partition 2<br/>BTC, ETH]
     end
 
-    subgraph ConsumerGroup["Consumer Group: trade-processor"]
+    subgraph ConsumerGroup["Consumer Group: trade-aggregator"]
         C1[Consumer 1<br/>auto.commit=false]
         C2[Consumer 2<br/>manual offset commits]
     end

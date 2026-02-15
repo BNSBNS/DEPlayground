@@ -85,7 +85,7 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
     CMD curl -f http://localhost:8003/metrics || exit 1
 
 # Run the ingestion service
-CMD ["python", "-m", "ingestion.main"]
+CMD ["python", "-m", "src.ingestion.main"]
 
 # =============================================================================
 # Labels for container metadata

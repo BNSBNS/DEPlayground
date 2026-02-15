@@ -9,8 +9,8 @@ from typing import Any
 from confluent_kafka import Producer, KafkaError, KafkaException
 import structlog
 
-from ingestion.ports import EventPublisherPort, PublishError
-from ingestion.domain.models import EnrichedTradeEvent
+from src.ingestion.ports import EventPublisherPort, PublishError
+from src.ingestion.domain.models import EnrichedTradeEvent
 from src.common.kafka_utils import DeliveryCallbackMixin
 
 
@@ -94,7 +94,7 @@ class KafkaPublisher(DeliveryCallbackMixin, EventPublisherPort):
 
     def _delivery_callback(self, err: KafkaError | None, msg: Any) -> None:
         """Handle delivery confirmation with pending count tracking."""
-        self._pending_count -= 1
+        self._pending_count = max(0, self._pending_count - 1)
         super()._delivery_callback(err, msg)
 
     def _on_delivery_failure(self, err: KafkaError, msg: Any) -> None:
@@ -147,10 +147,12 @@ class KafkaPublisher(DeliveryCallbackMixin, EventPublisherPort):
             producer.poll(0)
 
         except BufferError:
-            # Buffer full - poll and retry
+            # Revert increment: first produce didn't queue the message
+            self._pending_count -= 1
             self._logger.warning("Producer buffer full, waiting...")
             producer.poll(1.0)
             try:
+                self._pending_count += 1  # Re-increment for retry attempt
                 producer.produce(
                     topic=self._topic,
                     key=key,
@@ -191,9 +193,11 @@ class KafkaPublisher(DeliveryCallbackMixin, EventPublisherPort):
                 )
 
             except BufferError:
-                # Buffer full - flush and continue
+                # Revert increment: first produce didn't queue the message
+                self._pending_count -= 1
                 producer.flush(timeout=10.0)
                 try:
+                    self._pending_count += 1  # Re-increment for retry attempt
                     producer.produce(
                         topic=self._topic,
                         key=key,

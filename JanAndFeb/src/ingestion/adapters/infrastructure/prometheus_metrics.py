@@ -8,7 +8,7 @@ from typing import Any
 from prometheus_client import Counter, Gauge, Histogram, start_http_server
 import structlog
 
-from ingestion.ports import MetricsPort
+from src.ingestion.ports import MetricsPort
 
 
 logger = structlog.get_logger()

@@ -290,6 +290,20 @@ class ConsumerSettings(BaseSettings):
         description="Empirical memory cost per window (measured with realistic workload)",
     )
 
+    # Backpressure thresholds (configurable to tune for different workloads)
+    backpressure_high_watermark: int = Field(
+        default=1000,
+        ge=100,
+        le=50000,
+        description="In-flight message count to trigger consumption pause",
+    )
+    backpressure_low_watermark: int = Field(
+        default=100,
+        ge=10,
+        le=10000,
+        description="In-flight message count to trigger consumption resume",
+    )
+
 
 class APISettings(BaseSettings):
     """API server configuration."""
@@ -581,6 +595,12 @@ class MicroBatchSourceSettings(SourceSettings):
     )
 
     source_type: str = Field(default="micro_batch")
+    upstream_source: str | None = Field(
+        default=None,
+        description="Name of upstream source connector to wrap (e.g., 'finnhub'). "
+                    "The upstream's events are buffered and flushed as micro-batches. "
+                    "If None, operates in push mode via add_event().",
+    )
     window_seconds: int = Field(
         default=10,
         ge=1,

@@ -93,11 +93,13 @@ async def create_ingestion_manager(settings) -> IngestionManager:
             try:
                 connector_type = ConnectorType(source.source_type)
                 adapter_name = _get_adapter_name(source.name)
+                upstream_source = getattr(source, "upstream_source", None)
 
                 manager.add_connector_from_config(
                     connector_type=connector_type,
                     config=source.to_connector_config(),
                     adapter_name=adapter_name,
+                    upstream_source=upstream_source,
                 )
 
                 logger.info(
@@ -105,6 +107,7 @@ async def create_ingestion_manager(settings) -> IngestionManager:
                     name=source.name,
                     type=source.source_type,
                     adapter=adapter_name,
+                    upstream=upstream_source,
                 )
 
             except Exception as e:

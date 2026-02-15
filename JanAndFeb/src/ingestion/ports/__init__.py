@@ -5,9 +5,9 @@ Ports define the boundaries of the application:
 - Secondary/Driven Ports: How the application interacts with external systems
 """
 
-from ingestion.ports.ingestion_port import IngestionPort
-from ingestion.ports.publisher_port import EventPublisherPort, PublishError
-from ingestion.ports.metrics_port import MetricsPort
+from src.ingestion.ports.ingestion_port import IngestionPort
+from src.ingestion.ports.publisher_port import EventPublisherPort, PublishError
+from src.ingestion.ports.metrics_port import MetricsPort
 
 __all__ = [
     "IngestionPort",

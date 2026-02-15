@@ -160,6 +160,8 @@ class DLQInspector:
 
             import time
             start_time = time.time()
+            eof_partitions: set[int] = set()
+            assigned_partitions: set[int] | None = None
 
             while len(entries) < max_entries:
                 if time.time() - start_time > timeout:
@@ -167,10 +169,16 @@ class DLQInspector:
 
                 msg = consumer.poll(timeout=1.0)
                 if msg is None:
+                    if assigned_partitions is None:
+                        assignment = consumer.assignment()
+                        if assignment:
+                            assigned_partitions = {tp.partition for tp in assignment}
                     continue
                 if msg.error():
                     if msg.error().code() == KafkaError._PARTITION_EOF:
-                        break
+                        eof_partitions.add(msg.partition())
+                        if assigned_partitions and eof_partitions >= assigned_partitions:
+                            break
                     continue
 
                 try:

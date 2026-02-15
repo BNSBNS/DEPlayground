@@ -5,7 +5,7 @@ Provides a fluent API for building processing pipelines.
 
 from typing import Any, Callable
 
-from ingestion.pipeline.handlers import (
+from src.ingestion.pipeline.handlers import (
     Handler,
     ValidationHandler,
     DeduplicationHandler,
@@ -13,8 +13,8 @@ from ingestion.pipeline.handlers import (
     TransformationHandler,
     FilterHandler,
 )
-from ingestion.domain.models import EnrichedTradeEvent, SourceMetadata
-from ingestion.adapters.formats.base import DataAdapter
+from src.ingestion.domain.models import EnrichedTradeEvent, SourceMetadata
+from src.ingestion.adapters.formats.base import DataAdapter
 
 
 class PipelineBuilder:

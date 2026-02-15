@@ -13,7 +13,7 @@ Example flow:
 """
 
 from abc import ABC, abstractmethod
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Generic, TypeVar
 
@@ -206,8 +206,6 @@ class SymbolActivityProjection(Projection[TradeSubmittedEvent, SymbolActivityRea
         self._recent_trades[symbol].append(event.event_timestamp)
 
         # Clean old trades (keep last minute only)
-        cutoff = now - timedelta(minutes=1) if 'timedelta' in dir() else now
-        from datetime import timedelta
         cutoff = now - timedelta(minutes=1)
         self._recent_trades[symbol] = [
             t for t in self._recent_trades[symbol]

@@ -145,9 +145,14 @@ class TestTradeAggregate:
         """Test database tuple conversion."""
         db_tuple = sample_aggregate.to_db_tuple()
 
-        assert len(db_tuple) == 8
+        assert len(db_tuple) == 12  # 8 original + 4 LMP fields
         assert db_tuple[0] == "POWER_DE"  # symbol
         assert db_tuple[4] == sample_aggregate.total_volume
+        # LMP fields default to None
+        assert db_tuple[8] is None   # lmp
+        assert db_tuple[9] is None   # lmp_energy
+        assert db_tuple[10] is None  # lmp_congestion
+        assert db_tuple[11] is None  # lmp_loss
 
 
 class TestDLQMessage:

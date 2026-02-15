@@ -174,9 +174,10 @@ class StreamingChaosSimulator:
                 if new_dlq_messages == 0:
                     test.status = TestStatus.PASSED
                 else:
-                    # Unexpected DLQ - might still be OK depending on implementation
-                    test.status = TestStatus.PASSED
-                    test.actual_behavior += " (unexpected but handled)"
+                    test.status = TestStatus.FAILED
+                    test.error_message = (
+                        f"Expected 0 DLQ messages but got {new_dlq_messages}"
+                    )
 
             self._log(f"  Result: {test.status.value} - {test.actual_behavior}")
 
