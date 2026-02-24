@@ -1,0 +1,37 @@
+services:
+  # The MCP server for interactive testing via stdin.
+  # Usage: docker-compose run mcp-server
+  mcp-server:
+    build: .
+    stdin_open: true
+
+  # The agent spawns its own MCP server subprocess internally,
+  # so it does NOT connect to the mcp-server service above.
+  agent:
+    build: .
+    command: ["python", "-m", "src.agent", "List all files in the current directory"]
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+
+  # Local Ollama LLM server with persistent model storage.
+  # Pull a model first: docker-compose exec ollama ollama pull qwen2.5
+  ollama:
+    image: ollama/ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+
+  # Agent using local Ollama instead of Anthropic API.
+  # Requires: docker-compose exec ollama ollama pull qwen2.5
+  agent-ollama:
+    build: .
+    command: ["python", "-m", "src.agent_ollama", "List all files in the current directory"]
+    environment:
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen2.5}
+    depends_on:
+      - ollama
+
+volumes:
+  ollama_data:
