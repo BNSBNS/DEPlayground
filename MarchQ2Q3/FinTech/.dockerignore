@@ -1,0 +1,15 @@
+.git
+.env
+.env.*
+data/
+__pycache__
+*.egg-info
+.mypy_cache
+.pytest_cache
+.hypothesis
+htmlcov
+.coverage
+*.log
+.venv
+.idea
+.vscode

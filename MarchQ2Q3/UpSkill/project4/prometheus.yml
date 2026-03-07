@@ -1,0 +1,10 @@
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: "streaming-api"
+    static_configs:
+      - targets: ["app:8040"]
+  - job_name: "streaming-worker"
+    static_configs:
+      - targets: ["worker:9100"]

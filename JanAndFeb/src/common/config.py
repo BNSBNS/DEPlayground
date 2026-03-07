@@ -101,7 +101,7 @@ class PostgresSettings(BaseSettings):
         description="Full PostgreSQL connection string (overrides individual settings)",
     )
 
-    # Connection pool settings (Fix #7)
+    # Connection pool settings
     pool_min: int = Field(
         default=2,
         ge=1,
@@ -131,7 +131,7 @@ class PostgresSettings(BaseSettings):
         description="Timeout waiting for connection from pool (seconds)",
     )
 
-    # Retry settings (Fix #1)
+    # Retry settings
     retry_max: int = Field(
         default=3,
         ge=1,
@@ -202,7 +202,7 @@ class ProducerSettings(BaseSettings):
         description="Time between bursts in seconds",
     )
 
-    # Retry settings (Fix #2, #8)
+    # Retry settings
     buffer_retry_max: int = Field(
         default=5,
         ge=1,

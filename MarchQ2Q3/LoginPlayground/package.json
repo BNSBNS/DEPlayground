@@ -1,0 +1,43 @@
+{
+  "name": "auth-methods-lab",
+  "version": "1.0.0",
+  "description": "Learn authentication by building 8 methods from scratch",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx --watch src/server.ts",
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "setup:certs": "bash scripts/generate-certs.sh",
+    "seed": "tsx src/db.ts"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "express": "^4.21.0",
+    "better-sqlite3": "^11.6.0",
+    "ioredis": "^5.4.1",
+    "redis": "^4.7.0",
+    "bcrypt": "^5.1.1",
+    "jsonwebtoken": "^9.0.2",
+    "jose": "^5.9.6",
+    "cookie-parser": "^1.4.7",
+    "express-session": "^1.18.1",
+    "connect-redis": "^7.1.1",
+    "nodemailer": "^6.9.16",
+    "uuid": "^10.0.0",
+    "xml2js": "^0.6.2"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "@types/express": "^4.17.21",
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/bcrypt": "^5.0.2",
+    "@types/jsonwebtoken": "^9.0.7",
+    "@types/cookie-parser": "^1.4.7",
+    "@types/express-session": "^1.18.0",
+    "@types/nodemailer": "^6.4.17",
+    "@types/uuid": "^10.0.0",
+    "@types/xml2js": "^0.4.14",
+    "tsx": "^4.19.2"
+  }
+}

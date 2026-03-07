@@ -1,0 +1,36 @@
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: FraudAndAnomaly/Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - LOG_LEVEL=info
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  dashboard:
+    build:
+      context: ..
+      dockerfile: FraudAndAnomaly/Dockerfile
+    ports:
+      - "8501:8501"
+    command: ["streamlit", "run", "src/dashboard/app.py", "--server.port", "8501", "--server.address", "0.0.0.0"]
+    depends_on:
+      api:
+        condition: service_healthy
+
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v2.17.0
+    ports:
+      - "5000:5000"
+    command: ["mlflow", "server", "--host", "0.0.0.0", "--port", "5000"]
+    volumes:
+      - mlflow-data:/mlflow
+
+volumes:
+  mlflow-data:

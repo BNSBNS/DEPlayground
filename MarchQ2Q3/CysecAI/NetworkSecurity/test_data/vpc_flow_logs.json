@@ -1,0 +1,42 @@
+[
+  {
+    "start": 1735689600,
+    "srcaddr": "10.0.0.1",
+    "dstaddr": "10.0.0.2",
+    "srcport": 54321,
+    "dstport": 443,
+    "action": "ACCEPT",
+    "bytes": 5000,
+    "protocol": "6"
+  },
+  {
+    "start": 1735689610,
+    "srcaddr": "10.0.0.3",
+    "dstaddr": "10.0.0.4",
+    "srcport": 54322,
+    "dstport": 80,
+    "action": "ACCEPT",
+    "bytes": 1200,
+    "protocol": "6"
+  },
+  {
+    "start": 1735689620,
+    "srcaddr": "203.0.113.1",
+    "dstaddr": "10.0.0.100",
+    "srcport": 12345,
+    "dstport": 22,
+    "action": "REJECT",
+    "bytes": 0,
+    "protocol": "6"
+  },
+  {
+    "start": 1735689630,
+    "srcaddr": "203.0.113.1",
+    "dstaddr": "10.0.0.100",
+    "srcport": 12346,
+    "dstport": 22,
+    "action": "REJECT",
+    "bytes": 0,
+    "protocol": "6"
+  }
+]

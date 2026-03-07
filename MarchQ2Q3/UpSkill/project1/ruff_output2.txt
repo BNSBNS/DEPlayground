@@ -1,0 +1,71 @@
+TC001 Move application import `src.config.PostgresSettings` into a type-checking block
+  --> src\db\pool.py:9:24
+   |
+ 7 | import asyncpg
+ 8 |
+ 9 | from src.config import PostgresSettings
+   |                        ^^^^^^^^^^^^^^^^
+10 | from src.logging import get_logger
+   |
+help: Move into type-checking block
+
+TC002 Move third-party import `asyncpg` into a type-checking block
+ --> src\detectors\distribution.py:5:8
+  |
+3 | from __future__ import annotations
+4 |
+5 | import asyncpg
+  |        ^^^^^^^
+6 | from scipy import stats as scipy_stats
+  |
+help: Move into type-checking block
+
+TC002 Move third-party import `asyncpg` into a type-checking block
+ --> src\detectors\freshness.py:5:8
+  |
+3 | from __future__ import annotations
+4 |
+5 | import asyncpg
+  |        ^^^^^^^
+6 |
+7 | from src.config import get_settings
+  |
+help: Move into type-checking block
+
+TC002 Move third-party import `asyncpg` into a type-checking block
+ --> src\detectors\schema.py:7:8
+  |
+5 | import json
+6 |
+7 | import asyncpg
+  |        ^^^^^^^
+8 |
+9 | from src.logging import get_logger
+  |
+help: Move into type-checking block
+
+TC002 Move third-party import `asyncpg` into a type-checking block
+ --> src\detectors\volume.py:7:8
+  |
+5 | import math
+6 |
+7 | import asyncpg
+  |        ^^^^^^^
+8 |
+9 | from src.config import get_settings
+  |
+help: Move into type-checking block
+
+TC002 Move third-party import `asyncpg` into a type-checking block
+ --> src\reasoning\rca.py:7:8
+  |
+5 | from collections import deque
+6 |
+7 | import asyncpg
+  |        ^^^^^^^
+8 | from pydantic import BaseModel
+  |
+help: Move into type-checking block
+
+Found 6 errors.
+No fixes available (6 hidden fixes can be enabled with the `--unsafe-fixes` option).

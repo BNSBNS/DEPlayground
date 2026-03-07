@@ -1,0 +1,71 @@
+metadata:
+  name: Customers Contract
+  dataset: customers
+  owner_team: data-engineering
+  owner_contact: data-eng@company.com
+  status: active
+
+version: "1.0.0"
+
+schema:
+  schema: public
+  table: customers
+  columns:
+    id:
+      type: uuid
+      nullable: false
+    email:
+      type: text
+      nullable: false
+    full_name:
+      type: text
+      nullable: false
+    phone:
+      type: text
+      nullable: true
+    tier:
+      type: text
+      nullable: false
+    is_active:
+      type: boolean
+      nullable: false
+    created_at:
+      type: timestamptz
+      nullable: false
+    updated_at:
+      type: timestamptz
+      nullable: false
+
+quality:
+  rules:
+    freshness:
+      timestamp_column: updated_at
+      max_staleness_seconds: 7200
+    volume:
+      min_rows: 50
+      window_hours: 24
+      timestamp_column: created_at
+    completeness:
+      max_null_pct: 2.0
+      columns:
+        - email
+        - full_name
+        - tier
+    uniqueness:
+      columns:
+        - id
+        - email
+
+sla:
+  update_frequency_minutes: 60
+  max_latency_seconds: 300
+  min_availability_pct: 99.0
+  window_hours: 24
+  timestamp_column: updated_at
+
+consumers:
+  - marketing-team
+  - support-team
+  - analytics-team
+
+changelog: "Initial customers contract"

@@ -1,0 +1,18 @@
+[
+  {
+    "timestamp": 1735689600.0,
+    "src_ip": "10.0.0.1",
+    "dst_ip": "10.0.0.255",
+    "protocol": "ARP",
+    "arp_sender_mac": "aa:bb:cc:dd:ee:ff",
+    "arp_sender_ip": "10.0.0.1"
+  },
+  {
+    "timestamp": 1735689601.0,
+    "src_ip": "10.0.0.1",
+    "dst_ip": "10.0.0.255",
+    "protocol": "ARP",
+    "arp_sender_mac": "11:22:33:44:55:66",
+    "arp_sender_ip": "10.0.0.1"
+  }
+]

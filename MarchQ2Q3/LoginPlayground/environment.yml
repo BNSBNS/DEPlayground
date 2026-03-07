@@ -1,0 +1,7 @@
+name: auth-lab
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - nodejs=20
+  - npm

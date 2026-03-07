@@ -339,8 +339,8 @@ pip install -e ".[dev]"
 
 **Step 2: Start infrastructure only**
 ```bash
-# Start Zookeeper, Kafka, PostgreSQL (schema auto-initialized via volume mount)
-docker-compose up -d zookeeper kafka postgres kafka-init
+# Start Kafka (KRaft), PostgreSQL (schema auto-initialized via volume mount)
+docker-compose up -d kafka postgres kafka-init
 
 # Wait for services to be healthy
 docker-compose ps
@@ -537,30 +537,36 @@ docker exec kafka kafka-console-consumer \
 ## Project Structure
 
 ```
-Jan/
+JanAndFeb/
 ├── src/
 │   ├── common/           # Shared modules (models, config, utils)
-│   ├── producer/         # Trade event producer (Q3)
-│   ├── consumer/         # Streaming consumer with DLQ (Q4, Q5)
+│   ├── producer/         # Trade event producer
+│   ├── consumer/         # Streaming consumer with DLQ
+│   ├── ingestion/        # Multi-source data ingestion (hexagonal architecture)
 │   ├── api/              # FastAPI REST and WebSocket endpoints
 │   ├── chat/             # Natural language query interface (Gradio + Ollama)
-│   └── analytics/        # Time-series processor (Q8)
+│   ├── analytics/        # Time-series processor
+│   ├── pricing/          # LMP/energy pricing models
+│   ├── quality/          # Data quality checks
+│   ├── cqrs/             # Command/event separation (CQRS)
+│   └── lakehouse/        # Medallion architecture (Bronze/Silver/Gold)
 ├── sql/
-│   ├── schema/           # Database DDL (Q6)
-│   └── queries/          # Analytical queries (Q7)
-├── docker/               # Dockerfiles (Q9)
-├── k8s/                  # Kubernetes manifests (Q10)
+│   ├── schema/           # Database DDL
+│   └── queries/          # Analytical queries
+├── docker/               # Dockerfiles
+├── k8s/                  # Kubernetes manifests
 ├── terraform/            # AWS infrastructure (ECS, MSK, RDS)
 │   ├── modules/          # Reusable Terraform modules
 │   └── environments/     # Environment-specific configs (dev)
+├── monitoring/           # Prometheus and Grafana configuration
 ├── scripts/              # CD simulation and chaos testing
 │   └── chaos/            # Chaos testing framework
 │       ├── streaming/    # Streaming issue simulators
 │       ├── batch/        # Batch issue simulators
 │       └── utils/        # DLQ inspector, Kafka helpers
-├── docs/                 # Architecture and monitoring docs (Q1, Q2, Q11, Q14)
-├── tests/                # Unit and integration tests
-└── .github/workflows/    # CI pipeline (Q12)
+├── docs/                 # Architecture and monitoring docs
+├── tests/                # Unit, integration, and e2e tests
+└── .github/workflows/    # CI pipeline
 ```
 
 ## Key Design Decisions
@@ -599,12 +605,11 @@ See [.env.example](.env.example) for complete configuration options.
 
 | Document | Description |
 |----------|-------------|
-| [ASSESSMENT.md](docs/ASSESSMENT.md) | Original assessment questions and senior engineer guidance |
-| [ARCHITECTURE.md](docs/architecture/ARCHITECTURE.md) | End-to-end system design (Q1) |
-| [STREAMING_SEMANTICS.md](docs/STREAMING_SEMANTICS.md) | Delivery guarantees, CAP/ACID, upsert patterns (Q2, Q5-6, Q8-10) |
-| [FAILURE_SCENARIOS.md](docs/FAILURE_SCENARIOS.md) | Failure modes and recovery (Q11) |
-| [MONITORING_STRATEGY.md](docs/MONITORING_STRATEGY.md) | Metrics and alerts (Q14) |
+| [ASSESSMENT.md](docs/ASSESSMENT.md) | Assessment questions and senior engineer guidance |
+| [MONITORING_STRATEGY.md](docs/MONITORING_STRATEGY.md) | Metrics, alerts, and SLO definitions |
 | [VISUALIZATION_INTEGRATION.md](docs/VISUALIZATION_INTEGRATION.md) | PowerBI, Grafana, web frontend integration |
+| [SECURITY.md](docs/SECURITY.md) | Security practices and secret management |
+| [LAMBDA_ARCHITECTURE.md](docs/LAMBDA_ARCHITECTURE.md) | Lambda vs Kappa architecture reference |
 
 ### Operations
 

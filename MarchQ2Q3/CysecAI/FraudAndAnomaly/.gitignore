@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+
+# IDE
+.vscode/
+.idea/
+
+# Testing
+.pytest_cache/
+htmlcov/
+.coverage
+coverage.xml
+
+# Data artifacts
+data/output/
+*.parquet
+*.csv
+!tests/fixtures/*.csv
+
+# MLflow (Phase 5+)
+mlruns/
+mlartifacts/
+
+# Environment
+.env
+
+# OS
+.DS_Store
+Thumbs.db

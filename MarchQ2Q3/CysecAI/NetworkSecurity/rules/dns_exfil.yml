@@ -1,0 +1,11 @@
+id: dns_exfil
+name: DNS Exfiltration Detected
+severity: HIGH
+mitre: T1048.003
+threshold: 100
+window_seconds: 60
+protocol: DNS
+description: Detects data exfiltration via DNS using long encoded subdomains, high entropy, or high query volume.
+tags:
+  - network
+  - exfiltration

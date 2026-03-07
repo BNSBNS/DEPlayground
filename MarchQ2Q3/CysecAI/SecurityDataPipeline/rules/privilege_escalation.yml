@@ -1,0 +1,17 @@
+title: Unauthorized Admin Endpoint Access
+id: sigma-pe-001
+status: stable
+description: Detects non-admin users accessing admin API endpoints
+level: high
+logsource:
+    category: application
+    product: any
+detection:
+    selection:
+        event_type: http_request
+    filter_admin:
+        endpoint|contains: /admin/
+    condition: selection and filter_admin
+tags:
+    - attack.privilege_escalation
+    - attack.t1078

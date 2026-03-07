@@ -1,0 +1,16 @@
+title: Brute Force Login Attempt
+id: sigma-bf-001
+status: stable
+description: Detects failed login attempts that may indicate brute force attacks
+level: high
+logsource:
+    category: authentication
+    product: any
+detection:
+    selection:
+        event_type: login_failure
+        action: deny
+    condition: selection
+tags:
+    - attack.credential_access
+    - attack.t1110

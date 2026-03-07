@@ -1,0 +1,42 @@
+feature_sets:
+  - name: order_features
+    entity: order
+    owner: ops-team
+    tags: [orders, logistics]
+    batch_source: orders
+    stream_source: order-events
+    schedule: daily
+    freshness_sla_minutes: 120
+    features:
+      - name: item_count
+        value_type: int64
+        description: "Number of items in the order"
+        aggregation:
+          function: sum
+          window: "1 day"
+
+      - name: total_amount
+        value_type: float64
+        description: "Total order amount"
+        aggregation:
+          function: sum
+          window: "1 day"
+
+      - name: payment_method_mode
+        value_type: string
+        description: "Most common payment method for this order's customer"
+        aggregation:
+          function: last
+          window: "365 days"
+
+      - name: delivery_time_avg
+        value_type: float64
+        description: "Average delivery time in hours"
+        aggregation:
+          function: avg
+          window: "90 days"
+
+      - name: return_rate
+        value_type: float64
+        description: "Rate of returned items"
+        transform: "CASE WHEN total_items > 0 THEN returned_items::float / total_items ELSE 0 END"

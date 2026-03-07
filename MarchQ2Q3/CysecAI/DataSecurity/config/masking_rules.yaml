@@ -1,0 +1,13 @@
+# Masking Rules — map PII types to masking strategies
+
+rules:
+  email: email
+  phone: phone
+  credit_card: credit_card
+  nric: full_redact
+  ssn: full_redact
+  name: name
+  address: full_redact
+  ip_address: full_redact
+  date_of_birth: full_redact
+  unknown: full_redact

@@ -1,0 +1,66 @@
+[
+  {
+    "eventTime": "2026-01-01T00:01:00Z",
+    "eventName": "DescribeInstances",
+    "sourceIPAddress": "10.0.0.50",
+    "userIdentity": {
+      "type": "IAMUser",
+      "userName": "deploy-bot",
+      "arn": "arn:aws:iam::123:user/deploy-bot"
+    },
+    "eventSource": "ec2.amazonaws.com",
+    "awsRegion": "us-east-1"
+  },
+  {
+    "eventTime": "2026-01-01T00:02:00Z",
+    "eventName": "GetObject",
+    "sourceIPAddress": "10.0.0.50",
+    "userIdentity": {
+      "type": "IAMUser",
+      "userName": "deploy-bot",
+      "arn": "arn:aws:iam::123:user/deploy-bot"
+    },
+    "eventSource": "s3.amazonaws.com",
+    "awsRegion": "us-east-1"
+  },
+  {
+    "eventTime": "2026-01-01T01:00:00Z",
+    "eventName": "AttachUserPolicy",
+    "sourceIPAddress": "203.0.113.99",
+    "userIdentity": {
+      "type": "IAMUser",
+      "userName": "attacker",
+      "arn": "arn:aws:iam::123:user/attacker"
+    },
+    "eventSource": "iam.amazonaws.com",
+    "awsRegion": "us-east-1",
+    "requestParameters": {
+      "userName": "victim",
+      "policyArn": "arn:aws:iam::aws:policy/AdministratorAccess"
+    }
+  },
+  {
+    "eventTime": "2026-01-01T01:05:00Z",
+    "eventName": "StopLogging",
+    "sourceIPAddress": "203.0.113.99",
+    "userIdentity": {
+      "type": "Root",
+      "userName": "root",
+      "arn": "arn:aws:iam::123:root"
+    },
+    "eventSource": "cloudtrail.amazonaws.com",
+    "awsRegion": "us-east-1"
+  },
+  {
+    "eventTime": "2026-01-01T01:10:00Z",
+    "eventName": "AssumeRole",
+    "sourceIPAddress": "203.0.113.99",
+    "userIdentity": {
+      "type": "Root",
+      "userName": "root",
+      "arn": "arn:aws:iam::123:root"
+    },
+    "eventSource": "sts.amazonaws.com",
+    "awsRegion": "us-east-1"
+  }
+]

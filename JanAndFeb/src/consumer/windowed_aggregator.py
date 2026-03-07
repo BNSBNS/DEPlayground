@@ -3,11 +3,11 @@
 This module implements 1-minute tumbling window aggregation for trade events,
 computing VWAP, total volume, trade count, and price extremes per symbol.
 
-Key improvements for production correctness:
+Key features for production correctness:
 1. Offset tracking per window for safe shutdown and replay
 2. Memory guardrails with configurable limits
 3. State size monitoring and eviction policies
-4. Empirical memory estimation (Fix #6)
+4. Empirical memory estimation
 """
 
 from dataclasses import dataclass, field
@@ -182,7 +182,7 @@ class WindowedAggregator:
             max_windows: Maximum number of active windows to prevent memory leaks.
                         Oldest windows are evicted when limit is exceeded.
             max_memory_mb: Maximum estimated memory usage in MB before eviction.
-            empirical_bytes_per_window: Empirical memory cost per window (Fix #6).
+            empirical_bytes_per_window: Empirical memory cost per window.
         """
         self.window_duration = timedelta(seconds=window_duration_seconds)
         self.late_grace_period = timedelta(seconds=late_event_grace_seconds)

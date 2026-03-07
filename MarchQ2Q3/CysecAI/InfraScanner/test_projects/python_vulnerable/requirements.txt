@@ -1,0 +1,7 @@
+# Intentionally vulnerable dependencies for scanner testing
+requests==2.18.4
+urllib3==1.21.1
+cryptography==2.0.0
+Pillow==7.1.0
+Django==2.2.0
+PyYAML==5.1

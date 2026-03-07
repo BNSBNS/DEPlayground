@@ -35,7 +35,7 @@ produce_duration = Histogram(
     buckets=(0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05, 0.1),
 )
 
-# Retry metrics (Fix #2, #8)
+# Retry metrics
 producer_buffer_full_retries_total = Counter(
     "producer_buffer_full_retries_total",
     "Total producer buffer full retry attempts",

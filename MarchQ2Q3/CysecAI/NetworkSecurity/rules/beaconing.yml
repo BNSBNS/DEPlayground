@@ -1,0 +1,11 @@
+id: c2_beaconing
+name: C2 Beaconing Detected
+severity: HIGH
+mitre: T1071
+threshold: 10
+window_seconds: 3600
+protocol: TCP
+description: Detects periodic outbound TCP connections consistent with command-and-control beaconing.
+tags:
+  - network
+  - command-and-control

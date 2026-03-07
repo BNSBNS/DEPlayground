@@ -1,0 +1,16 @@
+title: SSH Lateral Movement
+id: sigma-lm-001
+status: stable
+description: Detects SSH login events that may indicate lateral movement between hosts
+level: medium
+logsource:
+    category: authentication
+    product: any
+detection:
+    selection:
+        event_type: login_success
+        method: ssh
+    condition: selection
+tags:
+    - attack.lateral_movement
+    - attack.t1021

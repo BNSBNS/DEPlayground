@@ -1,0 +1,43 @@
+feature_sets:
+  - name: customer_order_features
+    entity: customer
+    owner: data-team
+    tags: [orders, revenue]
+    batch_source: orders
+    stream_source: order-events
+    schedule: daily
+    freshness_sla_minutes: 120
+    features:
+      - name: total_orders
+        value_type: int64
+        description: "Total number of orders placed by the customer"
+        aggregation:
+          function: count
+          window: "365 days"
+
+      - name: total_spend
+        value_type: float64
+        description: "Total amount spent by the customer"
+        aggregation:
+          function: sum
+          window: "365 days"
+
+      - name: avg_order_value
+        value_type: float64
+        description: "Average order value"
+        aggregation:
+          function: avg
+          window: "365 days"
+
+      - name: days_since_last_order
+        value_type: int64
+        description: "Days since the customer last placed an order"
+        transform: "EXTRACT(DAY FROM NOW() - MAX(event_timestamp))"
+
+      - name: order_count_7d
+        value_type: int64
+        description: "Number of orders in the last 7 days"
+        aggregation:
+          function: count
+          window: "7 days"
+        freshness_sla_minutes: 60

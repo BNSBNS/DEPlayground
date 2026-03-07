@@ -6,16 +6,16 @@ This module provides a high-level consumer that:
 - Writes aggregates to PostgreSQL with idempotent upserts
 - Routes malformed messages to DLQ
 
-Key reliability improvements:
+Key reliability features:
 1. Safe offset commit coordination (commit after DB write with retry)
 2. Window watermark tracking for safe shutdown
 3. True Kafka lag metrics (offset-based)
 4. Backpressure and flow control
 5. Memory guardrails
-6. DB connection pooling with auto-reconnect and retry (Fix #1, #7)
-7. Idle window flush timer to prevent data loss when traffic stops (Fix #3)
-8. Accurate per-partition offset commit timing (Fix #5)
-9. Empirical memory estimation for window state (Fix #6)
+6. DB connection pooling with auto-reconnect and retry
+7. Idle window flush timer to prevent data loss when traffic stops
+8. Accurate per-partition offset commit timing
+9. Empirical memory estimation for window state
 """
 
 import json
@@ -328,7 +328,7 @@ class TradeConsumer:
 
         # Commit offsets with retry
         for partition, offset in partition_max_offsets.items():
-            # Timer inside loop for per-partition timing (Fix #5)
+            # Timer inside loop for per-partition timing
             commit_start = time.perf_counter()
             commit_result = self._offset_manager.commit_up_to(partition, offset)
             commit_duration = time.perf_counter() - commit_start

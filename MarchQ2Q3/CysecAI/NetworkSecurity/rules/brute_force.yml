@@ -1,0 +1,11 @@
+id: brute_force
+name: Brute Force Login Attempt
+severity: HIGH
+mitre: T1110
+threshold: 10
+window_seconds: 300
+protocol: TCP
+description: Detects repeated failed authentication attempts to SSH, FTP, HTTP, or other auth services.
+tags:
+  - network
+  - credential-access

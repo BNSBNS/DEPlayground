@@ -1,3 +1,53 @@
+# Claude Code
 .claude
+
+# Windows null device workaround
 nul
+
+# Project instructions / AI tool config
 CLAUDE.md
+memory.md
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# Coverage
+.coverage
+.coverage.*
+htmlcov/
+
+# Environments / secrets
+.env
+.env.local
+.env.*.local
+
+# Node
+node_modules/
+
+# Databases
+*.db
+*.sqlite3
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Build artifacts
+*.log
+dist/
+build/
+*.egg-info/
+
+# Temp tool output
+*_output.txt
+pip_stubs.txt

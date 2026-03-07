@@ -4,8 +4,8 @@ This module provides a high-level interface for producing trade events to Kafka
 with proper error handling, delivery callbacks, and graceful shutdown.
 
 Includes:
-- Exponential backoff retry with jitter for BufferError (Fix #8)
-- Bounded retry for Kafka exceptions (Fix #2)
+- Exponential backoff retry with jitter for BufferError
+- Bounded retry for Kafka exceptions
 - Parking queue for failed messages
 """
 
@@ -65,7 +65,7 @@ class TradeProducer(DeliveryCallbackMixin):
         # Statistics
         self._total_produced = 0
 
-        # Parking queue for failed messages (Fix #2)
+        # Parking queue for failed messages
         self._parking_queue: deque[tuple[TradeEvent, str]] = deque(
             maxlen=self.producer_settings.parking_queue_max_size
         )
@@ -94,8 +94,8 @@ class TradeProducer(DeliveryCallbackMixin):
         """Produce a single trade event with retry logic.
 
         Separate retry strategies:
-        - BufferError: Max 5 retries with exponential backoff (Fix #8)
-        - KafkaException: Max 3 retries with exponential backoff (Fix #2)
+        - BufferError: Max 5 retries with exponential backoff
+        - KafkaException: Max 3 retries with exponential backoff
         - Failed messages go to parking queue
 
         Args:

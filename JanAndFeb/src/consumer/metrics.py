@@ -209,7 +209,7 @@ aggregator_memory_limit_bytes = Gauge(
 )
 
 # =============================================================================
-# Database Metrics (Fix #1, #7)
+# Database Metrics
 # =============================================================================
 
 db_write_retries_total = Counter(

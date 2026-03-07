@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GraphRAG Knowledge Platform</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, sans-serif; background: #0f1117; color: #e2e8f0; min-height: 100vh; }
+    header { padding: 1.5rem 2rem; border-bottom: 1px solid #2d3748; }
+    header h1 { font-size: 1.25rem; font-weight: 600; color: #90cdf4; }
+    header p { font-size: 0.8rem; color: #718096; margin-top: 0.2rem; }
+    nav { display: flex; gap: 0.5rem; padding: 1rem 2rem; border-bottom: 1px solid #2d3748; }
+    nav button { padding: 0.4rem 1rem; border-radius: 6px; border: 1px solid #4a5568; background: transparent; color: #a0aec0; cursor: pointer; font-size: 0.85rem; }
+    nav button.active { background: #2b6cb0; border-color: #2b6cb0; color: #fff; }
+    main { padding: 2rem; max-width: 860px; margin: 0 auto; }
+    .section { display: none; }
+    .section.active { display: block; }
+
+    /* Query section */
+    .query-box { display: flex; gap: 0.5rem; margin-bottom: 1.5rem; }
+    .query-box input { flex: 1; padding: 0.65rem 1rem; border-radius: 8px; border: 1px solid #4a5568; background: #1a202c; color: #e2e8f0; font-size: 0.9rem; }
+    .query-box input:focus { outline: none; border-color: #63b3ed; }
+    .query-box button { padding: 0.65rem 1.25rem; border-radius: 8px; border: none; background: #2b6cb0; color: #fff; cursor: pointer; font-size: 0.9rem; }
+    .query-box button:disabled { opacity: 0.5; cursor: not-allowed; }
+    .answer-card { background: #1a202c; border: 1px solid #2d3748; border-radius: 10px; padding: 1.25rem; margin-bottom: 1rem; }
+    .answer-card h3 { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: #718096; margin-bottom: 0.5rem; }
+    .answer-card p { line-height: 1.6; font-size: 0.9rem; white-space: pre-wrap; }
+    .confidence { display: inline-block; font-size: 0.75rem; padding: 0.2rem 0.5rem; border-radius: 4px; margin-top: 0.5rem; }
+    .sources-grid { display: grid; gap: 0.75rem; }
+    .source-card { background: #171e2e; border: 1px solid #2d3748; border-radius: 8px; padding: 0.9rem; }
+    .source-card .meta { font-size: 0.72rem; color: #718096; margin-bottom: 0.35rem; }
+    .source-card .content { font-size: 0.82rem; line-height: 1.5; color: #cbd5e0; }
+    .score-badge { float: right; font-size: 0.68rem; background: #2d3748; padding: 0.15rem 0.4rem; border-radius: 4px; }
+
+    /* Eval section */
+    .eval-btn { padding: 0.55rem 1.1rem; border-radius: 8px; border: none; background: #276749; color: #fff; cursor: pointer; font-size: 0.85rem; margin-bottom: 1rem; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+    th { text-align: left; padding: 0.5rem 0.75rem; background: #1a202c; color: #718096; font-weight: 500; border-bottom: 1px solid #2d3748; }
+    td { padding: 0.5rem 0.75rem; border-bottom: 1px solid #1a202c; }
+    tr:hover td { background: #1a202c; }
+    .score { font-weight: 600; }
+    .score.good { color: #68d391; }
+    .score.warn { color: #f6ad55; }
+    .score.bad { color: #fc8181; }
+
+    .status { font-size: 0.8rem; color: #718096; margin-top: 0.5rem; }
+    .error { color: #fc8181; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>GraphRAG Knowledge Platform</h1>
+    <p>Hybrid vector + graph retrieval · Powered by local LLM</p>
+  </header>
+
+  <nav>
+    <button class="active" onclick="showTab('query', this)">Query</button>
+    <button onclick="showTab('eval', this)">Eval Results</button>
+  </nav>
+
+  <main>
+    <!-- Query tab -->
+    <div id="tab-query" class="section active">
+      <div class="query-box">
+        <input id="q" type="text" placeholder="Ask anything about your data catalog…" onkeydown="if(event.key==='Enter') ask()">
+        <button id="ask-btn" onclick="ask()">Ask</button>
+      </div>
+      <div id="answer-area"></div>
+    </div>
+
+    <!-- Eval tab -->
+    <div id="tab-eval" class="section">
+      <button class="eval-btn" onclick="loadEval()">Load Recent Results</button>
+      <div id="eval-area"></div>
+    </div>
+  </main>
+
+  <script>
+    const API = 'http://localhost:8020/api/v1';
+
+    function showTab(name, btn) {
+      document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+      document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
+      document.getElementById('tab-' + name).classList.add('active');
+      btn.classList.add('active');
+    }
+
+    async function ask() {
+      const q = document.getElementById('q').value.trim();
+      if (!q) return;
+      const btn = document.getElementById('ask-btn');
+      btn.disabled = true;
+      btn.textContent = 'Thinking…';
+      document.getElementById('answer-area').innerHTML = '<p class="status">Querying…</p>';
+
+      try {
+        const res = await fetch(`${API}/query`, {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({question: q})
+        });
+        if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+        const data = await res.json();
+        renderAnswer(data);
+      } catch (err) {
+        document.getElementById('answer-area').innerHTML = `<p class="status error">Error: ${err.message}</p>`;
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Ask';
+      }
+    }
+
+    function renderAnswer(data) {
+      const conf = (data.confidence * 100).toFixed(0);
+      const confColor = conf >= 70 ? '#68d391' : conf >= 40 ? '#f6ad55' : '#fc8181';
+      const sources = (data.sources || []).map((s, i) => `
+        <div class="source-card">
+          <div class="meta">
+            Source ${i + 1} · ${s.source || ''}
+            <span class="score-badge">score ${(s.score || 0).toFixed(3)}</span>
+          </div>
+          <div class="content">${escHtml(s.content || '')}</div>
+        </div>`).join('');
+
+      document.getElementById('answer-area').innerHTML = `
+        <div class="answer-card">
+          <h3>Answer</h3>
+          <p>${escHtml(data.answer || '')}</p>
+          <span class="confidence" style="background:${confColor}20;color:${confColor}">
+            Confidence ${conf}%
+          </span>
+        </div>
+        ${sources ? `<h3 style="margin-bottom:.75rem;font-size:.75rem;text-transform:uppercase;letter-spacing:.05em;color:#718096">Sources (${data.sources.length})</h3><div class="sources-grid">${sources}</div>` : ''}
+      `;
+    }
+
+    async function loadEval() {
+      document.getElementById('eval-area').innerHTML = '<p class="status">Loading…</p>';
+      try {
+        const res = await fetch(`${API}/eval/results?limit=20`);
+        if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+        const rows = await res.json();
+        if (!rows.length) { document.getElementById('eval-area').innerHTML = '<p class="status">No results yet. Run POST /api/v1/eval/run first.</p>'; return; }
+        renderEval(rows);
+      } catch (err) {
+        document.getElementById('eval-area').innerHTML = `<p class="status error">Error: ${err.message}</p>`;
+      }
+    }
+
+    function renderEval(rows) {
+      const cells = rows.map(r => `
+        <tr>
+          <td title="${escHtml(r.answer || '')}">${escHtml((r.question || '').slice(0, 60))}…</td>
+          <td class="score ${cls(r.faithfulness)}">${pct(r.faithfulness)}</td>
+          <td class="score ${cls(r.answer_relevancy)}">${pct(r.answer_relevancy)}</td>
+          <td class="score ${cls(r.context_precision)}">${pct(r.context_precision)}</td>
+          <td class="score ${cls(r.context_recall)}">${pct(r.context_recall)}</td>
+        </tr>`).join('');
+
+      document.getElementById('eval-area').innerHTML = `
+        <table>
+          <thead><tr><th>Question</th><th>Faithfulness</th><th>Relevancy</th><th>Precision</th><th>Recall</th></tr></thead>
+          <tbody>${cells}</tbody>
+        </table>`;
+    }
+
+    function pct(v) { return v != null ? (v * 100).toFixed(0) + '%' : '—'; }
+    function cls(v) { return v == null ? '' : v >= 0.7 ? 'good' : v >= 0.4 ? 'warn' : 'bad'; }
+    function escHtml(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+  </script>
+</body>
+</html>

@@ -1,0 +1,92 @@
+[
+  {
+    "name": "executive_kpis",
+    "title": "Executive KPIs",
+    "tool": "tableau",
+    "url": "https://tableau.internal/views/executive-kpis",
+    "owner": "sarah.chen",
+    "tables": ["exec_summary", "revenue_daily", "customer_cohorts"],
+    "metrics": ["revenue_daily", "customer_lifetime_value", "monthly_active_users"]
+  },
+  {
+    "name": "sales_overview",
+    "title": "Sales Overview",
+    "tool": "tableau",
+    "url": "https://tableau.internal/views/sales-overview",
+    "owner": "mike.johnson",
+    "tables": ["orders_mart", "revenue_daily", "products_mart"],
+    "metrics": ["revenue_daily", "avg_order_value", "conversion_rate"]
+  },
+  {
+    "name": "customer_360",
+    "title": "Customer 360",
+    "tool": "looker",
+    "url": "https://looker.internal/dashboards/customer-360",
+    "owner": "sarah.chen",
+    "tables": ["customers_mart", "customer_cohorts", "churn_prediction_features"],
+    "metrics": ["customer_lifetime_value", "churn_rate"]
+  },
+  {
+    "name": "inventory_tracker",
+    "title": "Inventory Tracker",
+    "tool": "tableau",
+    "url": "https://tableau.internal/views/inventory",
+    "owner": "alex.kim",
+    "tables": ["products_mart", "inventory_alerts"],
+    "metrics": ["days_until_stockout", "reorder_point"]
+  },
+  {
+    "name": "marketing_dashboard",
+    "title": "Marketing Performance",
+    "tool": "looker",
+    "url": "https://looker.internal/dashboards/marketing",
+    "owner": "priya.sharma",
+    "tables": ["marketing_attribution", "session_funnel", "customer_cohorts"],
+    "metrics": ["conversion_rate", "cpa", "roas"]
+  },
+  {
+    "name": "finance_reconciliation",
+    "title": "Finance Reconciliation",
+    "tool": "tableau",
+    "url": "https://tableau.internal/views/finance-recon",
+    "owner": "david.martinez",
+    "tables": ["payment_reconciliation", "orders_mart"],
+    "metrics": ["revenue_daily", "collection_rate"]
+  },
+  {
+    "name": "supplier_scorecard",
+    "title": "Supplier Scorecard",
+    "tool": "tableau",
+    "url": "https://tableau.internal/views/supplier-scorecard",
+    "owner": "alex.kim",
+    "tables": ["supplier_performance", "products_mart"],
+    "metrics": ["fulfillment_rate", "defect_rate"]
+  },
+  {
+    "name": "product_analytics",
+    "title": "Product Analytics",
+    "tool": "looker",
+    "url": "https://looker.internal/dashboards/product-analytics",
+    "owner": "mike.johnson",
+    "tables": ["products_mart", "session_funnel", "revenue_daily"],
+    "metrics": ["conversion_rate", "revenue_per_product"]
+  },
+  {
+    "name": "data_quality_monitor",
+    "title": "Data Quality Monitor",
+    "tool": "grafana",
+    "url": "https://grafana.internal/d/data-quality",
+    "owner": "jorge.ramirez",
+    "tables": ["exec_summary", "inventory_alerts"],
+    "metrics": ["freshness_score", "completeness_score"]
+  },
+  {
+    "name": "ml_model_monitoring",
+    "title": "ML Model Monitoring",
+    "tool": "grafana",
+    "url": "https://grafana.internal/d/ml-monitoring",
+    "owner": "lisa.wong",
+    "tables": ["churn_prediction_features", "customers_mart"],
+    "metrics": ["prediction_accuracy", "feature_drift"]
+  }
+]

@@ -1,0 +1,11 @@
+id: port_scan
+name: Port Scan Detected
+severity: HIGH
+mitre: T1046
+threshold: 20
+window_seconds: 60
+protocol: TCP
+description: Detects SYN, FIN, and XMAS port scans by monitoring packets to multiple destination ports from the same source.
+tags:
+  - network
+  - reconnaissance

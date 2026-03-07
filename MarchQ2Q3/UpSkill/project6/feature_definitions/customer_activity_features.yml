@@ -1,0 +1,47 @@
+feature_sets:
+  - name: customer_activity_features
+    entity: customer
+    owner: growth-team
+    tags: [activity, engagement]
+    batch_source: clickstream
+    stream_source: activity-events
+    schedule: hourly
+    freshness_sla_minutes: 60
+    features:
+      - name: page_views_7d
+        value_type: int64
+        description: "Page views in the last 7 days"
+        aggregation:
+          function: count
+          window: "7 days"
+          filter: "event_type = 'page_view'"
+
+      - name: cart_additions_7d
+        value_type: int64
+        description: "Cart additions in the last 7 days"
+        aggregation:
+          function: count
+          window: "7 days"
+          filter: "event_type = 'add_to_cart'"
+
+      - name: search_count_7d
+        value_type: int64
+        description: "Number of searches in the last 7 days"
+        aggregation:
+          function: count
+          window: "7 days"
+          filter: "event_type = 'search'"
+
+      - name: session_count_30d
+        value_type: int64
+        description: "Number of sessions in the last 30 days"
+        aggregation:
+          function: count_distinct
+          window: "30 days"
+
+      - name: last_active
+        value_type: timestamp
+        description: "Timestamp of last activity"
+        aggregation:
+          function: last
+          window: "365 days"

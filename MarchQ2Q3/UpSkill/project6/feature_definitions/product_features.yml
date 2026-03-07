@@ -1,0 +1,42 @@
+feature_sets:
+  - name: product_features
+    entity: product
+    owner: product-team
+    tags: [product, sales]
+    batch_source: order_items
+    stream_source: order-events
+    schedule: daily
+    freshness_sla_minutes: 180
+    features:
+      - name: total_sales
+        value_type: float64
+        description: "Total revenue from this product"
+        aggregation:
+          function: sum
+          window: "365 days"
+
+      - name: units_sold
+        value_type: int64
+        description: "Total units sold"
+        aggregation:
+          function: sum
+          window: "365 days"
+
+      - name: avg_rating
+        value_type: float64
+        description: "Average product rating"
+        aggregation:
+          function: avg
+          window: "365 days"
+
+      - name: view_count_30d
+        value_type: int64
+        description: "Product page views in the last 30 days"
+        aggregation:
+          function: count
+          window: "30 days"
+
+      - name: conversion_rate
+        value_type: float64
+        description: "Ratio of purchases to views"
+        transform: "CASE WHEN view_count > 0 THEN purchase_count::float / view_count ELSE 0 END"

@@ -1,0 +1,80 @@
+metadata:
+  name: Payments Contract
+  dataset: payments
+  owner_team: fintech-team
+  owner_contact: fintech@company.com
+  status: active
+
+version: "1.0.0"
+
+schema:
+  schema: public
+  table: payments
+  columns:
+    id:
+      type: uuid
+      nullable: false
+    order_id:
+      type: uuid
+      nullable: false
+    customer_id:
+      type: uuid
+      nullable: false
+    amount:
+      type: numeric
+      nullable: false
+    currency:
+      type: text
+      nullable: false
+    payment_method:
+      type: text
+      nullable: false
+    status:
+      type: text
+      nullable: false
+    gateway_reference:
+      type: text
+      nullable: true
+    processed_at:
+      type: timestamptz
+      nullable: true
+    created_at:
+      type: timestamptz
+      nullable: false
+
+quality:
+  rules:
+    freshness:
+      timestamp_column: created_at
+      max_staleness_seconds: 1800
+    volume:
+      min_rows: 200
+      max_rows: 500000
+      window_hours: 24
+      timestamp_column: created_at
+    completeness:
+      max_null_pct: 0.5
+      columns:
+        - order_id
+        - customer_id
+        - amount
+        - currency
+        - payment_method
+    uniqueness:
+      columns:
+        - id
+
+sla:
+  update_frequency_minutes: 5
+  max_latency_seconds: 60
+  min_availability_pct: 99.9
+  window_hours: 24
+  timestamp_column: created_at
+
+consumers:
+  - billing-service
+  - accounting-team
+  - fraud-detection
+  - analytics-team
+
+changelog: "Initial payments contract with strict SLA for financial data"

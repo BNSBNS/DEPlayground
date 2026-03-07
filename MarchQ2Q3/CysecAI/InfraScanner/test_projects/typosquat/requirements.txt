@@ -1,0 +1,4 @@
+# Typosquatted packages (for testing the detector)
+requsets==2.28.0
+numpyy==1.24.0
+fasapi>=0.100.0

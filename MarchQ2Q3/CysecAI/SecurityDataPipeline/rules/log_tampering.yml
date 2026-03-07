@@ -1,0 +1,21 @@
+title: Suspicious DNS Query to Known Malicious Domain
+id: sigma-dns-001
+status: stable
+description: Detects DNS queries to domains associated with C2 or exfiltration infrastructure
+level: critical
+logsource:
+    category: dns
+    product: any
+detection:
+    selection:
+        event_type: dns_query
+    filter_malicious:
+        query|endswith:
+            - ".evil.com"
+            - ".darknet.io"
+            - ".malware-drop.ru"
+            - ".phishing-kit.cn"
+    condition: selection and filter_malicious
+tags:
+    - attack.command_and_control
+    - attack.t1071

@@ -1,0 +1,86 @@
+[project]
+name = "cysec-shared"
+version = "0.1.0"
+description = "Shared models, config, and utilities for CysecAI portfolio"
+requires-python = ">=3.13"
+license = { text = "MIT" }
+
+dependencies = [
+    "pydantic>=2.10.0",
+    "pydantic-settings>=2.6.0",
+    "structlog>=24.4.0",
+    "aiokafka>=0.12.0",
+    "starlette>=0.41.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.24.0",
+    "pytest-cov>=6.0.0",
+    "ruff>=0.8.0",
+    "mypy>=1.13.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/cysec_shared"]
+
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W", "F", "I", "B", "C4", "UP", "ARG",
+    "SIM", "TCH", "PTH", "ERA", "PL", "RUF",
+]
+ignore = ["PLR0913", "PLR2004"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["cysec_shared"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = false
+
+[[tool.mypy.overrides]]
+module = ["aiokafka.*", "starlette.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = ["-v", "--strict-markers", "--tb=short", "-ra"]
+markers = [
+    "unit: Unit tests (fast, no external dependencies)",
+    "integration: Integration tests (require Docker containers)",
+]
+
+[tool.coverage.run]
+source = ["src/cysec_shared"]
+branch = true
+omit = ["*/tests/*", "*/__init__.py", "*/kafka/*", "*/api/middleware.py"]
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 80
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.:",
+]

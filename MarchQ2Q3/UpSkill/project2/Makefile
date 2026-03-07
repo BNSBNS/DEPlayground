@@ -1,0 +1,34 @@
+.PHONY: setup lint format type-check test test-cov docker-up docker-down seed simulate migrate
+
+setup:
+	pip install -e ".[dev]"
+
+lint:
+	ruff check src/ tests/
+
+format:
+	ruff format src/ tests/
+
+type-check:
+	mypy src/ --strict
+
+test:
+	pytest tests/unit -v
+
+test-cov:
+	pytest tests/unit -v --cov=src --cov-report=html
+
+docker-up:
+	docker compose up -d
+
+docker-down:
+	docker compose down -v
+
+seed:
+	python -m simulation.seed
+
+simulate:
+	python -m simulation.simulator
+
+migrate:
+	alembic upgrade head

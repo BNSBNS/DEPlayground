@@ -1,0 +1,28 @@
+[
+  {
+    "timestamp": 1735689600.0,
+    "src_ip": "10.0.0.20",
+    "dst_ip": "10.0.0.100",
+    "src_port": 54321,
+    "dst_port": 80,
+    "protocol": "HTTP",
+    "tcp_flags": "PSH-ACK",
+    "payload_size": 200,
+    "http_method": "GET",
+    "http_url": "/admin",
+    "http_host": "10.0.0.100",
+    "http_auth_header": "Basic admin:[REDACTED]"
+  },
+  {
+    "timestamp": 1735689601.0,
+    "src_ip": "10.0.0.21",
+    "dst_ip": "10.0.0.101",
+    "src_port": 54322,
+    "dst_port": 21,
+    "protocol": "FTP",
+    "tcp_flags": "PSH-ACK",
+    "payload_size": 20,
+    "ftp_command": "PASS",
+    "ftp_arg": "[REDACTED]"
+  }
+]

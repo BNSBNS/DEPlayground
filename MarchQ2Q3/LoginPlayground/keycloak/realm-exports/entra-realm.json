@@ -1,0 +1,137 @@
+{
+  "realm": "entra",
+  "enabled": true,
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": false,
+  "editUsernameAllowed": false,
+  "bruteForceProtected": false,
+  "clients": [
+    {
+      "clientId": "auth-lab-entra",
+      "name": "Auth Methods Lab (Entra ID Simulation)",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "auth-lab-entra-secret",
+      "redirectUris": ["http://localhost:3000/auth/entra/callback"],
+      "webOrigins": ["http://localhost:3000"],
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "fullScopeAllowed": true,
+      "defaultClientScopes": ["openid", "profile", "email"],
+      "protocolMappers": [
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "consentRequired": false,
+          "config": {
+            "userinfo.token.claim": "true",
+            "user.attribute": "groups",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "groups",
+            "jsonType.label": "String",
+            "multivalued": "true"
+          }
+        },
+        {
+          "name": "roles",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "consentRequired": false,
+          "config": {
+            "userinfo.token.claim": "true",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "roles",
+            "jsonType.label": "String",
+            "multivalued": "true"
+          }
+        },
+        {
+          "name": "tid",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-hardcoded-claim-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.value": "contoso-tenant-00000-00000",
+            "userinfo.token.claim": "true",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "tid",
+            "jsonType.label": "String"
+          }
+        }
+      ]
+    }
+  ],
+  "roles": {
+    "realm": [
+      {
+        "name": "Admin",
+        "description": "Administrator role (simulates Entra app role)"
+      },
+      {
+        "name": "User",
+        "description": "Standard user role"
+      }
+    ]
+  },
+  "groups": [
+    {
+      "name": "Engineering",
+      "path": "/Engineering"
+    },
+    {
+      "name": "Finance",
+      "path": "/Finance"
+    }
+  ],
+  "users": [
+    {
+      "username": "alice@contoso.local",
+      "email": "alice@contoso.local",
+      "firstName": "Alice",
+      "lastName": "Contoso",
+      "enabled": true,
+      "emailVerified": true,
+      "attributes": {
+        "groups": ["Engineering"]
+      },
+      "credentials": [
+        {
+          "type": "password",
+          "value": "password",
+          "temporary": false
+        }
+      ],
+      "realmRoles": ["Admin", "User"],
+      "groups": ["/Engineering"]
+    },
+    {
+      "username": "bob@contoso.local",
+      "email": "bob@contoso.local",
+      "firstName": "Bob",
+      "lastName": "Contoso",
+      "enabled": true,
+      "emailVerified": true,
+      "attributes": {
+        "groups": ["Finance"]
+      },
+      "credentials": [
+        {
+          "type": "password",
+          "value": "password",
+          "temporary": false
+        }
+      ],
+      "realmRoles": ["User"],
+      "groups": ["/Finance"]
+    }
+  ]
+}

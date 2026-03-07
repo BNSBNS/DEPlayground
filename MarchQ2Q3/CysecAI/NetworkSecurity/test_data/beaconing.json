@@ -1,0 +1,122 @@
+[
+  {
+    "timestamp": 1735689599.6159122,
+    "src_ip": "10.0.0.10",
+    "dst_ip": "198.51.100.1",
+    "src_port": 55708,
+    "dst_port": 443,
+    "protocol": "TCP",
+    "tcp_flags": "SYN",
+    "payload_size": 0
+  },
+  {
+    "timestamp": 1735689660.3977563,
+    "src_ip": "10.0.0.10",
+    "dst_ip": "198.51.100.1",
+    "src_port": 56697,
+    "dst_port": 443,
+    "protocol": "TCP",
+    "tcp_flags": "SYN",
+    "payload_size": 0
+  },
+  {
+    "timestamp": 1735689718.9937253,
+    "src_ip": "10.0.0.10",
+    "dst_ip": "198.51.100.1",
+    "src_port": 51989,
+    "dst_port": 443,
+    "protocol": "TCP",
+    "tcp_flags": "SYN",
+    "payload_size": 0
+  },
+  {
+    "timestamp": 1735689779.004604,
+    "src_ip": "10.0.0.10",
+    "dst_ip": "198.51.100.1",
+    "src_port": 61704,
+    "dst_port": 443,
+    "protocol": "TCP",
+    "tcp_flags": "SYN",
+    "payload_size": 0
+  },
+  {
+    "timestamp": 1735689840.1232505,
+    "src_ip": "10.0.0.10",
+    "dst_ip": "198.51.100.1",
+    "src_port": 52095,
+    "dst_port": 443,
+    "protocol": "TCP",
+    "tcp_flags": "SYN",
+    "payload_size": 0
+  },
+  {
+    "timestamp": 1735689901.7535074,
+    "src_ip": "10.0.0.10",
+    "dst_ip": "198.51.100.1",
+    "src_port": 65184,
+    "dst_port": 443,
+    "protocol": "TCP",
+    "tcp_flags": "SYN",
+    "payload_size": 0
+  },
+  {
+    "timestamp": 1735689958.7978725,
+    "src_ip": "10.0.0.10",
+    "dst_ip": "198.51.100.1",
+    "src_port": 56252,
+    "dst_port": 443,
+    "protocol": "TCP",
+    "tcp_flags": "SYN",
+    "payload_size": 0
+  },
+  {
+    "timestamp": 1735690021.170456,
+    "src_ip": "10.0.0.10",
+    "dst_ip": "198.51.100.1",
+    "src_port": 61406,
+    "dst_port": 443,
+    "protocol": "TCP",
+    "tcp_flags": "SYN",
+    "payload_size": 0
+  },
+  {
+    "timestamp": 1735690081.2893016,
+    "src_ip": "10.0.0.10",
+    "dst_ip": "198.51.100.1",
+    "src_port": 56118,
+    "dst_port": 443,
+    "protocol": "TCP",
+    "tcp_flags": "SYN",
+    "payload_size": 0
+  },
+  {
+    "timestamp": 1735690138.609106,
+    "src_ip": "10.0.0.10",
+    "dst_ip": "198.51.100.1",
+    "src_port": 55017,
+    "dst_port": 443,
+    "protocol": "TCP",
+    "tcp_flags": "SYN",
+    "payload_size": 0
+  },
+  {
+    "timestamp": 1735690201.3998687,
+    "src_ip": "10.0.0.10",
+    "dst_ip": "198.51.100.1",
+    "src_port": 60254,
+    "dst_port": 443,
+    "protocol": "TCP",
+    "tcp_flags": "SYN",
+    "payload_size": 0
+  },
+  {
+    "timestamp": 1735690258.331862,
+    "src_ip": "10.0.0.10",
+    "dst_ip": "198.51.100.1",
+    "src_port": 52029,
+    "dst_port": 443,
+    "protocol": "TCP",
+    "tcp_flags": "SYN",
+    "payload_size": 0
+  }
+]

@@ -1,0 +1,93 @@
+teams:
+  - name: analytics-team
+    lead: sarah.chen
+    slack_channel: "#analytics"
+    domains:
+      - customer_analytics
+      - revenue_reporting
+  - name: data-engineering
+    lead: jorge.ramirez
+    slack_channel: "#data-eng"
+    domains:
+      - raw_ingestion
+      - data_quality
+  - name: product-team
+    lead: mike.johnson
+    slack_channel: "#product-data"
+    domains:
+      - product_analytics
+      - session_analysis
+  - name: finance-team
+    lead: david.martinez
+    slack_channel: "#finance-data"
+    domains:
+      - payment_reconciliation
+      - revenue_accounting
+  - name: ml-team
+    lead: lisa.wong
+    slack_channel: "#ml-platform"
+    domains:
+      - feature_engineering
+      - model_monitoring
+
+owners:
+  - name: sarah.chen
+    email: sarah.chen@company.com
+    team: analytics-team
+    owns:
+      - schema:customer_analytics
+      - dashboard:executive_kpis
+      - dashboard:customer_360
+      - dbt_model:customers_mart
+      - dbt_model:customer_cohorts
+  - name: mike.johnson
+    email: mike.johnson@company.com
+    team: product-team
+    owns:
+      - schema:product_analytics
+      - dashboard:sales_overview
+      - dashboard:product_analytics
+      - dbt_model:products_mart
+      - dbt_model:session_funnel
+  - name: jorge.ramirez
+    email: jorge.ramirez@company.com
+    team: data-engineering
+    owns:
+      - database:warehouse
+      - schema:raw
+      - schema:staging
+      - dashboard:data_quality_monitor
+  - name: david.martinez
+    email: david.martinez@company.com
+    team: finance-team
+    owns:
+      - schema:finance
+      - dashboard:finance_reconciliation
+      - dbt_model:payment_reconciliation
+  - name: alex.kim
+    email: alex.kim@company.com
+    team: data-engineering
+    owns:
+      - dashboard:inventory_tracker
+      - dashboard:supplier_scorecard
+      - dbt_model:inventory_alerts
+      - dbt_model:supplier_performance
+  - name: priya.sharma
+    email: priya.sharma@company.com
+    team: analytics-team
+    owns:
+      - dashboard:marketing_dashboard
+      - dbt_model:marketing_attribution
+  - name: lisa.wong
+    email: lisa.wong@company.com
+    team: ml-team
+    owns:
+      - schema:ml_features
+      - dashboard:ml_model_monitoring
+      - dbt_model:churn_prediction_features
+  - name: carlos.garcia
+    email: carlos.garcia@company.com
+    team: data-engineering
+    owns:
+      - dbt_model:exec_summary
+      - dbt_model:revenue_daily

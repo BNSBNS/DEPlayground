@@ -1,0 +1,54 @@
+{
+  "title": "Data Observability",
+  "uid": "p1-observability",
+  "schemaVersion": 38,
+  "refresh": "15s",
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "API Up",
+      "gridPos": {"x": 0, "y": 0, "w": 4, "h": 4},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "up{job=\"observability-api\"}", "legendFormat": "up"}],
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"]}, "colorMode": "background"},
+      "fieldConfig": {"defaults": {"mappings": [{"type": "value", "options": {"0": {"text": "DOWN", "color": "red"}, "1": {"text": "UP", "color": "green"}}}]}}
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Process CPU (s)",
+      "gridPos": {"x": 4, "y": 0, "w": 4, "h": 4},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "process_cpu_seconds_total{job=\"observability-api\"}", "legendFormat": "cpu"}]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Open File Descriptors",
+      "gridPos": {"x": 8, "y": 0, "w": 4, "h": 4},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "process_open_fds{job=\"observability-api\"}", "legendFormat": "fds"}]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "HTTP Request Rate (req/s)",
+      "gridPos": {"x": 0, "y": 4, "w": 24, "h": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "rate(http_requests_total{job=\"observability-api\"}[1m])", "legendFormat": "{{method}} {{status_code}}"}
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "GC Collections / s",
+      "gridPos": {"x": 0, "y": 12, "w": 24, "h": 6},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "rate(python_gc_collections_total{job=\"observability-api\"}[1m])", "legendFormat": "gen{{generation}}"}
+      ]
+    }
+  ]
+}

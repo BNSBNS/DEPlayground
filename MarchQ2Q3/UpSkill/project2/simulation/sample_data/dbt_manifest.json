@@ -1,0 +1,328 @@
+{
+  "metadata": {
+    "dbt_schema_version": "https://schemas.getdbt.com/dbt/manifest/v12.json",
+    "generated_at": "2026-02-20T10:00:00Z",
+    "project_name": "analytics"
+  },
+  "nodes": {
+    "model.analytics.stg_orders": {
+      "name": "stg_orders",
+      "schema": "staging",
+      "materialization": "view",
+      "description": "Staged orders from the raw orders table with type casting and filtering.",
+      "depends_on": {"nodes": ["source.analytics.raw.orders"]},
+      "columns": {
+        "order_id": {"name": "order_id", "description": "Primary key", "data_type": "uuid"},
+        "customer_id": {"name": "customer_id", "description": "FK to customers", "data_type": "uuid"},
+        "order_date": {"name": "order_date", "description": "Date the order was placed", "data_type": "date"},
+        "total_amount": {"name": "total_amount", "description": "Order total in USD", "data_type": "numeric(18,2)"},
+        "status": {"name": "status", "description": "Order status", "data_type": "varchar"}
+      }
+    },
+    "model.analytics.stg_customers": {
+      "name": "stg_customers",
+      "schema": "staging",
+      "materialization": "view",
+      "description": "Staged customer data with deduplication.",
+      "depends_on": {"nodes": ["source.analytics.raw.customers"]},
+      "columns": {
+        "customer_id": {"name": "customer_id", "description": "Primary key", "data_type": "uuid"},
+        "email": {"name": "email", "description": "Customer email address", "data_type": "varchar"},
+        "name": {"name": "name", "description": "Full name", "data_type": "varchar"},
+        "signup_date": {"name": "signup_date", "description": "Account creation date", "data_type": "date"}
+      }
+    },
+    "model.analytics.stg_payments": {
+      "name": "stg_payments",
+      "schema": "staging",
+      "materialization": "view",
+      "description": "Staged payment transactions.",
+      "depends_on": {"nodes": ["source.analytics.raw.payments"]},
+      "columns": {
+        "payment_id": {"name": "payment_id", "data_type": "uuid"},
+        "order_id": {"name": "order_id", "data_type": "uuid"},
+        "amount": {"name": "amount", "data_type": "numeric(18,2)"},
+        "method": {"name": "method", "data_type": "varchar"},
+        "status": {"name": "status", "data_type": "varchar"}
+      }
+    },
+    "model.analytics.stg_products": {
+      "name": "stg_products",
+      "schema": "staging",
+      "materialization": "view",
+      "description": "Staged product catalog.",
+      "depends_on": {"nodes": ["source.analytics.raw.products"]},
+      "columns": {
+        "product_id": {"name": "product_id", "data_type": "uuid"},
+        "name": {"name": "name", "data_type": "varchar"},
+        "category": {"name": "category", "data_type": "varchar"},
+        "price": {"name": "price", "data_type": "numeric(18,2)"}
+      }
+    },
+    "model.analytics.stg_sessions": {
+      "name": "stg_sessions",
+      "schema": "staging",
+      "materialization": "view",
+      "description": "Staged user session data from clickstream.",
+      "depends_on": {"nodes": ["source.analytics.raw.sessions"]},
+      "columns": {
+        "session_id": {"name": "session_id", "data_type": "uuid"},
+        "customer_id": {"name": "customer_id", "data_type": "uuid"},
+        "started_at": {"name": "started_at", "data_type": "timestamptz"},
+        "page_views": {"name": "page_views", "data_type": "integer"}
+      }
+    },
+    "model.analytics.stg_inventory": {
+      "name": "stg_inventory",
+      "schema": "staging",
+      "materialization": "view",
+      "description": "Staged inventory levels per warehouse.",
+      "depends_on": {"nodes": ["source.analytics.raw.inventory"]},
+      "columns": {
+        "product_id": {"name": "product_id", "data_type": "uuid"},
+        "warehouse_id": {"name": "warehouse_id", "data_type": "varchar"},
+        "quantity": {"name": "quantity", "data_type": "integer"},
+        "updated_at": {"name": "updated_at", "data_type": "timestamptz"}
+      }
+    },
+    "model.analytics.int_order_payments": {
+      "name": "int_order_payments",
+      "schema": "intermediate",
+      "materialization": "ephemeral",
+      "description": "Joins orders with their payment totals.",
+      "depends_on": {"nodes": ["model.analytics.stg_orders", "model.analytics.stg_payments"]},
+      "columns": {
+        "order_id": {"name": "order_id", "data_type": "uuid"},
+        "customer_id": {"name": "customer_id", "data_type": "uuid"},
+        "order_total": {"name": "order_total", "data_type": "numeric(18,2)"},
+        "payment_total": {"name": "payment_total", "data_type": "numeric(18,2)"},
+        "payment_status": {"name": "payment_status", "data_type": "varchar"}
+      }
+    },
+    "model.analytics.int_customer_sessions": {
+      "name": "int_customer_sessions",
+      "schema": "intermediate",
+      "materialization": "ephemeral",
+      "description": "Aggregates session data per customer.",
+      "depends_on": {"nodes": ["model.analytics.stg_sessions", "model.analytics.stg_customers"]},
+      "columns": {
+        "customer_id": {"name": "customer_id", "data_type": "uuid"},
+        "total_sessions": {"name": "total_sessions", "data_type": "integer"},
+        "total_page_views": {"name": "total_page_views", "data_type": "integer"},
+        "last_session_at": {"name": "last_session_at", "data_type": "timestamptz"}
+      }
+    },
+    "model.analytics.orders_mart": {
+      "name": "orders_mart",
+      "schema": "marts",
+      "materialization": "table",
+      "description": "Order fact table with payment status and customer details.",
+      "depends_on": {"nodes": ["model.analytics.int_order_payments", "model.analytics.stg_customers"]},
+      "columns": {
+        "order_id": {"name": "order_id", "data_type": "uuid"},
+        "customer_id": {"name": "customer_id", "data_type": "uuid"},
+        "customer_name": {"name": "customer_name", "data_type": "varchar"},
+        "order_total": {"name": "order_total", "data_type": "numeric(18,2)"},
+        "payment_total": {"name": "payment_total", "data_type": "numeric(18,2)"},
+        "order_date": {"name": "order_date", "data_type": "date"},
+        "status": {"name": "status", "data_type": "varchar"}
+      }
+    },
+    "model.analytics.customers_mart": {
+      "name": "customers_mart",
+      "schema": "marts",
+      "materialization": "table",
+      "description": "Customer dimension with lifetime metrics and engagement scores.",
+      "depends_on": {"nodes": ["model.analytics.stg_customers", "model.analytics.int_order_payments", "model.analytics.int_customer_sessions"]},
+      "columns": {
+        "customer_id": {"name": "customer_id", "data_type": "uuid"},
+        "name": {"name": "name", "data_type": "varchar"},
+        "email": {"name": "email", "data_type": "varchar"},
+        "total_orders": {"name": "total_orders", "data_type": "integer"},
+        "lifetime_value": {"name": "lifetime_value", "data_type": "numeric(18,2)"},
+        "total_sessions": {"name": "total_sessions", "data_type": "integer"},
+        "signup_date": {"name": "signup_date", "data_type": "date"}
+      }
+    },
+    "model.analytics.products_mart": {
+      "name": "products_mart",
+      "schema": "marts",
+      "materialization": "table",
+      "description": "Product performance with inventory and revenue metrics.",
+      "depends_on": {"nodes": ["model.analytics.stg_products", "model.analytics.stg_inventory", "model.analytics.stg_orders"]},
+      "columns": {
+        "product_id": {"name": "product_id", "data_type": "uuid"},
+        "name": {"name": "name", "data_type": "varchar"},
+        "category": {"name": "category", "data_type": "varchar"},
+        "total_revenue": {"name": "total_revenue", "data_type": "numeric(18,2)"},
+        "units_sold": {"name": "units_sold", "data_type": "integer"},
+        "current_stock": {"name": "current_stock", "data_type": "integer"}
+      }
+    },
+    "model.analytics.revenue_daily": {
+      "name": "revenue_daily",
+      "schema": "metrics",
+      "materialization": "table",
+      "description": "Daily revenue aggregation broken down by product category.",
+      "depends_on": {"nodes": ["model.analytics.orders_mart", "model.analytics.products_mart"]},
+      "columns": {
+        "date": {"name": "date", "data_type": "date"},
+        "category": {"name": "category", "data_type": "varchar"},
+        "revenue": {"name": "revenue", "data_type": "numeric(18,2)"},
+        "order_count": {"name": "order_count", "data_type": "integer"},
+        "avg_order_value": {"name": "avg_order_value", "data_type": "numeric(18,2)"}
+      }
+    },
+    "model.analytics.customer_cohorts": {
+      "name": "customer_cohorts",
+      "schema": "metrics",
+      "materialization": "table",
+      "description": "Monthly cohort analysis for customer retention.",
+      "depends_on": {"nodes": ["model.analytics.customers_mart", "model.analytics.orders_mart"]},
+      "columns": {
+        "cohort_month": {"name": "cohort_month", "data_type": "date"},
+        "months_since_signup": {"name": "months_since_signup", "data_type": "integer"},
+        "customers": {"name": "customers", "data_type": "integer"},
+        "retained": {"name": "retained", "data_type": "integer"},
+        "retention_rate": {"name": "retention_rate", "data_type": "numeric(5,2)"}
+      }
+    },
+    "model.analytics.inventory_alerts": {
+      "name": "inventory_alerts",
+      "schema": "metrics",
+      "materialization": "incremental",
+      "description": "Low stock alerts based on sales velocity and current inventory.",
+      "depends_on": {"nodes": ["model.analytics.products_mart"]},
+      "columns": {
+        "product_id": {"name": "product_id", "data_type": "uuid"},
+        "product_name": {"name": "product_name", "data_type": "varchar"},
+        "current_stock": {"name": "current_stock", "data_type": "integer"},
+        "daily_velocity": {"name": "daily_velocity", "data_type": "numeric(10,2)"},
+        "days_until_stockout": {"name": "days_until_stockout", "data_type": "integer"},
+        "alert_level": {"name": "alert_level", "data_type": "varchar"}
+      }
+    },
+    "model.analytics.session_funnel": {
+      "name": "session_funnel",
+      "schema": "metrics",
+      "materialization": "table",
+      "description": "Session-level funnel analysis from page view to purchase.",
+      "depends_on": {"nodes": ["model.analytics.int_customer_sessions", "model.analytics.orders_mart"]},
+      "columns": {
+        "date": {"name": "date", "data_type": "date"},
+        "sessions": {"name": "sessions", "data_type": "integer"},
+        "add_to_cart": {"name": "add_to_cart", "data_type": "integer"},
+        "checkout": {"name": "checkout", "data_type": "integer"},
+        "purchase": {"name": "purchase", "data_type": "integer"},
+        "conversion_rate": {"name": "conversion_rate", "data_type": "numeric(5,4)"}
+      }
+    },
+    "model.analytics.supplier_performance": {
+      "name": "supplier_performance",
+      "schema": "marts",
+      "materialization": "table",
+      "description": "Supplier-level aggregations of product revenue and fulfillment.",
+      "depends_on": {"nodes": ["model.analytics.products_mart", "model.analytics.orders_mart"]},
+      "columns": {
+        "supplier_id": {"name": "supplier_id", "data_type": "varchar"},
+        "total_revenue": {"name": "total_revenue", "data_type": "numeric(18,2)"},
+        "total_products": {"name": "total_products", "data_type": "integer"},
+        "avg_fulfillment_days": {"name": "avg_fulfillment_days", "data_type": "numeric(5,1)"}
+      }
+    },
+    "model.analytics.marketing_attribution": {
+      "name": "marketing_attribution",
+      "schema": "marts",
+      "materialization": "table",
+      "description": "Marketing channel attribution using last-touch model.",
+      "depends_on": {"nodes": ["model.analytics.int_customer_sessions", "model.analytics.orders_mart"]},
+      "columns": {
+        "channel": {"name": "channel", "data_type": "varchar"},
+        "attributed_revenue": {"name": "attributed_revenue", "data_type": "numeric(18,2)"},
+        "attributed_orders": {"name": "attributed_orders", "data_type": "integer"},
+        "cpa": {"name": "cpa", "data_type": "numeric(10,2)"}
+      }
+    },
+    "model.analytics.churn_prediction_features": {
+      "name": "churn_prediction_features",
+      "schema": "ml_features",
+      "materialization": "table",
+      "description": "Feature table for churn prediction model.",
+      "depends_on": {"nodes": ["model.analytics.customers_mart", "model.analytics.int_customer_sessions"]},
+      "columns": {
+        "customer_id": {"name": "customer_id", "data_type": "uuid"},
+        "days_since_last_order": {"name": "days_since_last_order", "data_type": "integer"},
+        "order_frequency": {"name": "order_frequency", "data_type": "numeric(10,4)"},
+        "avg_order_value": {"name": "avg_order_value", "data_type": "numeric(18,2)"},
+        "session_recency": {"name": "session_recency", "data_type": "integer"},
+        "page_view_trend": {"name": "page_view_trend", "data_type": "numeric(10,4)"}
+      }
+    },
+    "model.analytics.exec_summary": {
+      "name": "exec_summary",
+      "schema": "reporting",
+      "materialization": "table",
+      "description": "Executive summary metrics for the daily report.",
+      "depends_on": {"nodes": ["model.analytics.revenue_daily", "model.analytics.customers_mart", "model.analytics.inventory_alerts"]},
+      "columns": {
+        "date": {"name": "date", "data_type": "date"},
+        "total_revenue": {"name": "total_revenue", "data_type": "numeric(18,2)"},
+        "new_customers": {"name": "new_customers", "data_type": "integer"},
+        "active_alerts": {"name": "active_alerts", "data_type": "integer"},
+        "top_category": {"name": "top_category", "data_type": "varchar"}
+      }
+    },
+    "model.analytics.payment_reconciliation": {
+      "name": "payment_reconciliation",
+      "schema": "finance",
+      "materialization": "incremental",
+      "description": "Daily reconciliation between orders and payment processor.",
+      "depends_on": {"nodes": ["model.analytics.orders_mart", "model.analytics.stg_payments"]},
+      "columns": {
+        "date": {"name": "date", "data_type": "date"},
+        "expected_revenue": {"name": "expected_revenue", "data_type": "numeric(18,2)"},
+        "collected_revenue": {"name": "collected_revenue", "data_type": "numeric(18,2)"},
+        "discrepancy": {"name": "discrepancy", "data_type": "numeric(18,2)"},
+        "unmatched_orders": {"name": "unmatched_orders", "data_type": "integer"}
+      }
+    }
+  },
+  "sources": {
+    "source.analytics.raw.orders": {
+      "name": "orders",
+      "schema": "raw",
+      "database": "warehouse",
+      "description": "Raw orders from the transactional database."
+    },
+    "source.analytics.raw.customers": {
+      "name": "customers",
+      "schema": "raw",
+      "database": "warehouse",
+      "description": "Raw customer records."
+    },
+    "source.analytics.raw.payments": {
+      "name": "payments",
+      "schema": "raw",
+      "database": "warehouse",
+      "description": "Raw payment transactions from the payment processor."
+    },
+    "source.analytics.raw.products": {
+      "name": "products",
+      "schema": "raw",
+      "database": "warehouse",
+      "description": "Raw product catalog."
+    },
+    "source.analytics.raw.sessions": {
+      "name": "sessions",
+      "schema": "raw",
+      "database": "warehouse",
+      "description": "Raw clickstream session data."
+    },
+    "source.analytics.raw.inventory": {
+      "name": "inventory",
+      "schema": "raw",
+      "database": "warehouse",
+      "description": "Raw inventory levels per warehouse."
+    }
+  }
+}

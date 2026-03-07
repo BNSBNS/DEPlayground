@@ -1,0 +1,74 @@
+metadata:
+  name: Orders Contract
+  dataset: orders
+  owner_team: platform-engineering
+  owner_contact: platform-eng@company.com
+  status: active
+
+version: "1.0.0"
+
+schema:
+  schema: public
+  table: orders
+  columns:
+    id:
+      type: uuid
+      nullable: false
+    customer_id:
+      type: uuid
+      nullable: false
+    product_id:
+      type: uuid
+      nullable: false
+    quantity:
+      type: integer
+      nullable: false
+    unit_price:
+      type: numeric
+      nullable: false
+    total_amount:
+      type: numeric
+      nullable: false
+    status:
+      type: text
+      nullable: false
+    created_at:
+      type: timestamptz
+      nullable: false
+    updated_at:
+      type: timestamptz
+      nullable: false
+
+quality:
+  rules:
+    freshness:
+      timestamp_column: updated_at
+      max_staleness_seconds: 3600
+    volume:
+      min_rows: 100
+      max_rows: 1000000
+      window_hours: 24
+      timestamp_column: created_at
+    completeness:
+      max_null_pct: 1.0
+      columns:
+        - customer_id
+        - product_id
+        - total_amount
+    uniqueness:
+      columns:
+        - id
+
+sla:
+  update_frequency_minutes: 15
+  max_latency_seconds: 120
+  min_availability_pct: 99.5
+  window_hours: 24
+  timestamp_column: updated_at
+
+consumers:
+  - analytics-team
+  - billing-service
+  - reporting-dashboard
+
+changelog: "Initial orders contract with schema, quality, and SLA definitions"
