@@ -1,0 +1,13 @@
+services:
+  linux-lab:
+    build: .
+    container_name: linux-lab
+    hostname: linux-lab
+    stdin_open: true
+    tty: true
+    # Mount a scratch volume for persistence across restarts
+    volumes:
+      - lab-scratch:/scratch
+
+volumes:
+  lab-scratch:
