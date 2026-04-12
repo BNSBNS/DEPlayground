@@ -1,0 +1,127 @@
+{
+  "title": "ML Forecasts",
+  "uid": "forecasts",
+  "schemaVersion": 39,
+  "version": 1,
+  "timezone": "utc",
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "tags": ["ml", "forecasting"],
+  "templating": {
+    "list": [
+      {
+        "name": "symbol",
+        "type": "query",
+        "datasource": { "type": "postgres", "uid": "postgres" },
+        "query": "SELECT DISTINCT symbol FROM trade_aggregates ORDER BY symbol",
+        "refresh": 1,
+        "includeAll": false,
+        "current": { "text": "POWER_DE", "value": "POWER_DE" }
+      },
+      {
+        "name": "model",
+        "type": "query",
+        "datasource": { "type": "postgres", "uid": "postgres" },
+        "query": "SELECT DISTINCT model_name FROM forecasts ORDER BY model_name",
+        "refresh": 1,
+        "includeAll": true,
+        "current": { "text": "All", "value": "$__all" }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Actual VWAP vs Forecast",
+      "type": "timeseries",
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 0 },
+      "datasource": { "type": "postgres", "uid": "postgres" },
+      "targets": [
+        {
+          "refId": "A",
+          "rawSql": "SELECT window_start AS time, vwap AS actual FROM trade_aggregates WHERE symbol = '$symbol' AND $__timeFilter(window_start) ORDER BY 1",
+          "format": "time_series"
+        },
+        {
+          "refId": "B",
+          "rawSql": "SELECT forecast_for AS time, model_name, yhat AS yhat, yhat_lower, yhat_upper FROM forecasts WHERE symbol = '$symbol' AND model_name IN ($model) AND $__timeFilter(forecast_for) ORDER BY 1",
+          "format": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 10 }
+        }
+      }
+    },
+    {
+      "id": 2,
+      "title": "Rolling MAE by Model (last 6h)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 10 },
+      "datasource": { "type": "postgres", "uid": "postgres" },
+      "targets": [
+        {
+          "refId": "A",
+          "rawSql": "SELECT f.forecast_for AS time, f.model_name, AVG(ABS(f.yhat - a.vwap)) OVER (PARTITION BY f.model_name ORDER BY f.forecast_for ROWS BETWEEN 59 PRECEDING AND CURRENT ROW) AS mae FROM forecasts f JOIN trade_aggregates a ON a.symbol = f.symbol AND a.window_start = f.forecast_for WHERE f.symbol = '$symbol' AND f.model_name IN ($model) AND $__timeFilter(f.forecast_for) ORDER BY 1",
+          "format": "time_series"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Model Freshness (age of latest forecast)",
+      "type": "stat",
+      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 10 },
+      "datasource": { "type": "postgres", "uid": "postgres" },
+      "targets": [
+        {
+          "refId": "A",
+          "rawSql": "SELECT model_name AS metric, EXTRACT(EPOCH FROM (NOW() - MAX(generated_at))) AS value FROM forecasts WHERE symbol = '$symbol' GROUP BY model_name",
+          "format": "table"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 600 },
+              { "color": "red", "value": 3600 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 4,
+      "title": "Anomaly Events (24h)",
+      "type": "table",
+      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 10 },
+      "datasource": { "type": "postgres", "uid": "postgres" },
+      "targets": [
+        {
+          "refId": "A",
+          "rawSql": "SELECT window_start, detector_name, score FROM anomaly_scores WHERE symbol = '$symbol' AND is_anomaly = TRUE AND window_start > NOW() - INTERVAL '24 hours' ORDER BY window_start DESC LIMIT 50",
+          "format": "table"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Trained Model Versions",
+      "type": "table",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 18 },
+      "datasource": { "type": "postgres", "uid": "postgres" },
+      "targets": [
+        {
+          "refId": "A",
+          "rawSql": "SELECT model_name, model_version, trained_at, metrics ->> 'cv_mae' AS cv_mae, metrics ->> 'cv_rmse' AS cv_rmse FROM model_registry ORDER BY trained_at DESC LIMIT 25",
+          "format": "table"
+        }
+      ]
+    }
+  ]
+}

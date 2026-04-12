@@ -18,6 +18,13 @@ dependencies:
   - pandas>=2.1.0
   - numpy>=1.26.0
 
+  # ML stack (conda-forge preferred for compiled libs)
+  - scikit-learn>=1.5
+  - statsmodels>=0.14.2
+  - lightgbm>=4.5
+  - pytorch>=2.4
+  - joblib>=1.4
+
   # Database
   - psycopg>=3.1.0
   - libpq  # PostgreSQL client library
@@ -51,3 +58,6 @@ dependencies:
       - testcontainers[kafka,postgres]>=3.7.0
       - types-python-dateutil>=2.8.0
       - pandas-stubs>=2.1.0
+
+      # ML scheduling (not in conda-forge)
+      - apscheduler>=3.10

@@ -56,6 +56,17 @@ dev = [
     "types-python-dateutil>=2.8.0",
     "pandas-stubs>=2.1.0",
 ]
+ml = [
+    # Classical + gradient boosting
+    "scikit-learn>=1.5",
+    "statsmodels>=0.14.2",
+    "lightgbm>=4.5",
+    # Deep learning
+    "torch>=2.4",
+    # Persistence + scheduling
+    "joblib>=1.4",
+    "apscheduler>=3.10",
+]
 
 [project.scripts]
 trade-producer = "src.producer.main:main"
@@ -63,6 +74,7 @@ trade-consumer = "src.consumer.main:main"
 trade-ingestion = "src.ingestion.main:main"
 trade-api = "src.api.main:main"
 trade-chat = "src.chat.app:main"
+trade-ml = "src.ml.main:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -128,8 +140,30 @@ module = [
     "confluent_kafka.*",
     "testcontainers.*",
     "aiofiles.*",
+    # Optional ML stack — installed via the `[ml]` extras. The forecasting
+    # layer is guarded behind these imports so missing types should not
+    # fail strict mypy in base installs.
+    "statsmodels.*",
+    "lightgbm.*",
+    "sklearn.*",
+    "joblib.*",
+    "apscheduler.*",
+    "torch",
+    "torch.*",
 ]
 ignore_missing_imports = true
+
+# The deep-learning adapters interact with torch, whose public stubs
+# are intentionally loose (Tensor operations typically return ``Any``
+# and nn.ModuleDict is typed as Module, not Mapping). Strict mypy
+# therefore flags patterns that are idiomatic torch code. The two
+# environments — local without ``[ml]`` extras, and the ml container
+# with torch present — produce different error sets, so we silence the
+# union of both here.
+[[tool.mypy.overrides]]
+module = ["src.ml.models.deep.*"]
+warn_unused_ignores = false
+disable_error_code = ["import-not-found", "misc", "no-any-return", "index"]
 
 # Pytest configuration
 [tool.pytest.ini_options]

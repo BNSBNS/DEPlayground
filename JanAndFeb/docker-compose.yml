@@ -1,5 +1,3 @@
-version: "3.8"
-
 services:
   # Kafka in KRaft mode (no Zookeeper required)
   kafka:
@@ -68,9 +66,11 @@ services:
     networks:
       - trading-network
 
-  # PostgreSQL database
+  # PostgreSQL database (TimescaleDB image — the schema under
+  # sql/schema/003_timescaledb_setup.sql and 007_create_ml_tables.sql
+  # both call ``create_hypertable``, which requires the extension).
   postgres:
-    image: postgres:16-alpine
+    image: timescale/timescaledb:latest-pg16
     container_name: postgres
     ports:
       - "5432:5432"
@@ -207,10 +207,86 @@ services:
     networks:
       - trading-network
 
+  # =========================================================================
+  # ML / Forecasting services
+  # =========================================================================
+  # The ML image is heavy (~2 GB: torch + lightgbm + statsmodels) so it is
+  # gated behind the `ml` compose profile. Core trading services are NOT
+  # affected; running `docker compose up` without `--profile ml` leaves the
+  # forecasting stack untouched.
+  #
+  #   docker compose --profile ml up -d ml-scheduler
+  #   docker compose --profile ml run --rm ml-trainer trade-ml train \
+  #       --model gru --symbol POWER_DE
+  # =========================================================================
+
+  # Long-running periodic retraining loop (APScheduler cron).
+  ml-scheduler:
+    build:
+      context: .
+      dockerfile: docker/ml/Dockerfile
+    image: trade-ml:latest
+    container_name: trade-ml-scheduler
+    profiles: ["ml"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      POSTGRES_DSN: postgresql://${POSTGRES_USER:-trading}:${POSTGRES_PASSWORD:-trading}@postgres:5432/${POSTGRES_DB:-trades}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER:-trading}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-trading}
+      POSTGRES_DB: ${POSTGRES_DB:-trades}
+      ML_MODEL_NAME: ${ML_MODEL_NAME:-lightgbm}
+      ML_HORIZON_MINUTES: ${ML_HORIZON_MINUTES:-15}
+      ML_SYMBOLS: ${ML_SYMBOLS:-["POWER_DE"]}
+      ML_RETRAIN_CRON: ${ML_RETRAIN_CRON:-0 2 * * *}
+      ML_MODEL_STORE_PATH: /app/data/ml_models
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    volumes:
+      - ml_models:/app/data/ml_models
+    command: ["trade-ml", "schedule"]
+    restart: unless-stopped
+    networks:
+      - trading-network
+
+  # One-shot trainer. Override `command` at invocation time.
+  # Usage:
+  #   docker compose --profile ml run --rm ml-trainer \
+  #       trade-ml train --model gru --symbol POWER_DE
+  ml-trainer:
+    build:
+      context: .
+      dockerfile: docker/ml/Dockerfile
+    image: trade-ml:latest
+    container_name: trade-ml-trainer
+    profiles: ["ml"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      POSTGRES_DSN: postgresql://${POSTGRES_USER:-trading}:${POSTGRES_PASSWORD:-trading}@postgres:5432/${POSTGRES_DB:-trades}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER:-trading}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-trading}
+      POSTGRES_DB: ${POSTGRES_DB:-trades}
+      ML_MODEL_STORE_PATH: /app/data/ml_models
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    volumes:
+      - ml_models:/app/data/ml_models
+    entrypoint: []
+    command: ["trade-ml", "--help"]
+    networks:
+      - trading-network
+
 volumes:
   kafka_data:
     driver: local
   postgres_data:
+    driver: local
+  ml_models:
     driver: local
 
 networks:

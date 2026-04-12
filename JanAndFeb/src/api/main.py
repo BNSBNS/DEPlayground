@@ -16,6 +16,11 @@ from src.api.services.kafka_streamer import KafkaStreamer
 from src.common.config import get_settings
 from src.common.logging_config import get_logger
 from src.consumer.db_writer import DatabaseWriter
+from src.ml.api.routes import router as ml_router
+from src.ml.store.repository import (
+    PostgresForecastRepository,
+    PostgresModelRegistryRepository,
+)
 
 logger = get_logger(__name__)
 
@@ -28,6 +33,18 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Initialize database writer
     logger.info("Initializing database connection")
     app.state.db_writer = DatabaseWriter(settings.postgres)
+
+    # Wire the ML read layer.
+    #
+    # The API container is lean — it does NOT install torch/lightgbm/statsmodels.
+    # It only reads the ``forecasts``, ``anomaly_scores``, and ``model_registry``
+    # tables that the separate ``ml-scheduler`` / ``ml-trainer`` containers
+    # populate. Fresh inference goes through those workers, not through the
+    # API process.
+    logger.info("Wiring ML read-only repositories")
+    app.state.ml_forecast_repo = PostgresForecastRepository(app.state.db_writer)
+    app.state.ml_registry_repo = PostgresModelRegistryRepository(app.state.db_writer)
+    app.state.ml_inference = None  # fresh-inference is delegated to ml-scheduler
 
     # Initialize Kafka streamer for WebSocket
     logger.info("Initializing Kafka streamer")
@@ -84,6 +101,7 @@ def create_app() -> FastAPI:
     # Include routers
     app.include_router(health.router, tags=["health"])
     app.include_router(aggregates.router, prefix="/api/v1", tags=["aggregates"])
+    app.include_router(ml_router, prefix="/api/v1", tags=["ml"])
     app.include_router(websocket.router, tags=["websocket"])
 
     return app
